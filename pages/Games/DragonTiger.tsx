@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { auth } from '../../firebase';
 import { getUserProfile, playDragonTiger } from '../../services/userService';
 import { UserProfile } from '../../types';
-import { ChevronLeft, Info, Settings, RotateCcw, PlayCircle } from 'lucide-react';
+import { ChevronLeft, Info, Settings } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { WinLossPopup } from '../../components/WinLossPopup';
 
@@ -23,7 +23,10 @@ export const DragonTiger = () => {
     }, []);
 
     const handleBet = async () => {
-        if (!user || !selectedZone || dealing) return;
+        if (!user || !selectedZone || dealing) {
+            if (!selectedZone) alert("Please select a betting zone (Dragon, Tiger, or Tie)");
+            return;
+        }
         
         const amount = parseInt(customAmount);
         
@@ -209,4 +212,35 @@ export const DragonTiger = () => {
                         </div>
                     </div>
 
-                    <div className="flex gap-2
+                    <div className="flex gap-2">
+                        {[10, 50, 100, 500].map(amt => (
+                             <button 
+                                key={amt}
+                                onClick={() => setCustomAmount(amt.toString())}
+                                className="w-10 h-10 rounded-lg bg-gray-800 border border-gray-600 text-xs font-bold text-gray-400 hover:bg-gray-700 hover:text-white transition"
+                             >
+                                 {amt}
+                             </button>
+                        ))}
+                    </div>
+                </div>
+
+                <button 
+                    onClick={handleBet}
+                    disabled={dealing}
+                    className={`w-full py-4 rounded-xl font-black text-xl tracking-widest shadow-lg transition active:scale-95 ${dealing ? 'bg-gray-600 text-gray-400 cursor-not-allowed' : 'bg-gradient-to-r from-yellow-500 to-yellow-700 text-black shadow-yellow-600/20'}`}
+                >
+                    {dealing ? 'DEALING...' : 'BET'}
+                </button>
+            </div>
+
+            {popup && (
+                <WinLossPopup 
+                    type={popup.type} 
+                    amount={popup.amount} 
+                    onClose={() => setPopup(null)} 
+                />
+            )}
+        </div>
+    );
+};
