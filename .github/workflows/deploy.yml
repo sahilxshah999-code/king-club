@@ -15,10 +15,12 @@ jobs:
     - name: 🟢 Install Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: 18
+        node-version: 20
 
     - name: 📦 Install Dependencies
-      run: npm install --legacy-peer-deps
+      run: |
+        rm -f package-lock.json
+        npm install
 
     - name: 🏗️ Build Website
       run: npm run build
@@ -33,4 +35,7 @@ jobs:
         password: ${{ secrets.FTP_PASSWORD }}
         local-dir: ./dist/
         server-dir: ./htdocs/
-        log-level: verbose
+        exclude: |
+          **/.git*
+          **/.git/**
+          **/node_modules/**
