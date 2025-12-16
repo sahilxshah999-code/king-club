@@ -18,10 +18,12 @@ jobs:
         node-version: 18
 
     - name: 📦 Install Dependencies
-      run: npm install
+      run: npm install --legacy-peer-deps
 
     - name: 🏗️ Build Website
       run: npm run build
+      env:
+        CI: false
 
     - name: 📂 Sync files to InfinityFree
       uses: SamKirkland/FTP-Deploy-Action@v4.3.4
@@ -31,4 +33,4 @@ jobs:
         password: ${{ secrets.FTP_PASSWORD }}
         local-dir: ./dist/
         server-dir: ./htdocs/
-        
+        log-level: verbose
