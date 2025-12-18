@@ -52,7 +52,6 @@ export const markWelcomeAsSeen = async (uid: string) => {
 };
 
 // --- HELPER FUNCTIONS FOR BALANCE MANAGEMENT ---
-
 const initUserBalances = (user: UserProfile) => {
     if (user.depositBalance === undefined) user.depositBalance = 0;
     if (user.bonusBalance === undefined) user.bonusBalance = 0;
@@ -244,13 +243,11 @@ export const checkDailyTransactionLimit = async (uid: string): Promise<boolean> 
 export const createTransaction = async (tx: Omit<Transaction, 'id' | 'status' | 'timestamp'>) => {
   const settings = await getSystemSettings();
   
-  // Enforce Daily Limit
   const canProceed = await checkDailyTransactionLimit(tx.uid);
   if (!canProceed) {
       throw new Error("You have reached the daily limit of 6 deposit/withdrawal requests.");
   }
 
-  // Enforce Max Limits
   if (tx.type === 'deposit') {
       if (tx.amount > settings.maxDeposit) {
           throw new Error(`Maximum deposit amount is ₹${settings.maxDeposit}`);
@@ -347,7 +344,7 @@ export const approveDeposit = async (uid: string, amount: number) => {
         if (!user) return null;
         addDepositAmount(user, amount);
         user.totalDeposited = (user.totalDeposited || 0) + amount;
-        user.lastDepositAmount = amount; // Track for placeholders
+        user.lastDepositAmount = amount; 
         if (settings.depositBonusPercent > 0) {
             addBonusAmount(user, (amount * settings.depositBonusPercent) / 100);
         }
@@ -463,7 +460,6 @@ export const playDragonTiger = async (uid: string, betType: string, amount: numb
 };
 
 export const startMinesGame = async (uid: string, betAmount: number, minesCount: number) => {
-    // Fixed: changed 'amount' to 'betAmount' to match function parameter
     const res = await placeBet(uid, betAmount);
     if (res.success) {
         const grid = Array(25).fill(0);
@@ -473,7 +469,6 @@ export const startMinesGame = async (uid: string, betAmount: number, minesCount:
     return res;
 };
 
-// STRATEGY: Rigged reveal with adjusted win chance and bet percentage check
 export const revealMinesTile = async (uid: string, index: number) => {
     const gameRef = ref(db, `active_games/mines/${uid}`);
     const snap = await get(gameRef);
@@ -484,16 +479,12 @@ export const revealMinesTile = async (uid: string, index: number) => {
     if (!user) return { success: false };
 
     const revealedCount = (game.revealed || []).length;
-
-  
-    // Strategy: If bet is >= 45% of total balance, 1st click has high chance of mine
     const totalFunds = user.balance + game.betAmount;
     const betPercent = game.betAmount / (totalFunds || 1);
     
     let isMine = game.grid[index] === 1;
     let gridChanged = false;
 
-    // Hard Rig: If 1st click and high bet percentage, force mine with 65% chance
     if (revealedCount === 0 && betPercent >= 0.45 && !isMine && game.betAmount > 100 && Math.random() < 0.65) {
         const mineIndices = game.grid.map((v: number, i: number) => v === 1 ? i : -1).filter((i: number) => i !== -1);
         if (mineIndices.length > 0) {
@@ -505,15 +496,10 @@ export const revealMinesTile = async (uid: string, index: number) => {
         }
     }
 
-    // Secondary Rig: Overall win probability logic
     if (!isMine) {
         const difficultyScalar = Math.min(1, (game.betAmount / 1500)); 
-        let winProb = 0.6 * (1 - (difficultyScalar * 0.05)); // ~60% base
-        
-        // CUSTOM RULE: Small bets (<= 100) have 90% win chance (10% loss)
-        if (game.betAmount <= 100) {
-            winProb = 0.9;
-        }
+        let winProb = 0.6 * (1 - (difficultyScalar * 0.05)); 
+        if (game.betAmount <= 100) winProb = 0.9;
         
         if (Math.random() > winProb) {
             const mineIndices = game.grid.map((v: number, i: number) => v === 1 ? i : -1).filter((i: number) => i !== -1);
@@ -527,9 +513,7 @@ export const revealMinesTile = async (uid: string, index: number) => {
         }
     }
 
-    if (gridChanged) {
-        await update(gameRef, { grid: game.grid });
-    }
+    if (gridChanged) await update(gameRef, { grid: game.grid });
 
     const rev = [...(game.revealed || []), index];
     if (isMine) {
@@ -577,7 +561,6 @@ export const redeemPromoCode = async (uid: string, code: string) => {
         
         const promo = promoSnap.val() as PromoCode;
         
-        // Preliminary checks
         if (Date.now() > promo.expiryDate) return { success: false, error: "This code has expired" };
         if (promo.currentUses >= promo.maxUses) return { success: false, error: "This code has reached its usage limit" };
         if (promo.claimedBy && promo.claimedBy[uid]) return { success: false, error: "You have already redeemed this code" };
@@ -587,7 +570,6 @@ export const redeemPromoCode = async (uid: string, code: string) => {
             return { success: false, error: `Minimum cumulative deposit of ₹${minReq} required to claim this code` };
         }
 
-        // Atomic update of promo uses
         const res = await runTransaction(promoRef, (p: PromoCode | null) => {
             if (!p) return p; 
             if (p.currentUses >= p.maxUses) return; 
@@ -600,11 +582,8 @@ export const redeemPromoCode = async (uid: string, code: string) => {
         });
 
         if (res.committed) {
-            // Add bonus to user
             await runTransaction(userRef, (u: UserProfile | null) => {
-                if (u) {
-                    addBonusAmount(u, promo.amount);
-                }
+                if (u) addBonusAmount(u, promo.amount);
                 return u;
             });
 
