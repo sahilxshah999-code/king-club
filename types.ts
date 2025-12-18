@@ -1,3 +1,7 @@
+export interface BannerItem {
+  imageUrl: string;
+  link?: string;
+}
 
 export interface UserProfile {
   uid: string;
@@ -14,6 +18,7 @@ export interface UserProfile {
   vipLevel: number;
   totalWagered: number;
   totalDeposited: number; 
+  lastDepositAmount?: number; // Added to track last deposit for placeholders
   referralCode: string;
   referredBy?: string;
   referralCount?: number;
@@ -39,7 +44,7 @@ export interface SystemSettings {
   referralBonus: number; 
   referralDepositBonusPercent: number; 
   depositBonusPercent: number; 
-  homeBanners: string[]; 
+  homeBanners: BannerItem[]; 
   adminUpiId: string; 
   adminQrCodeUrl: string; 
   adminUsdtAddress: string; 
@@ -52,7 +57,10 @@ export interface SystemSettings {
   forgotPasswordUrl?: string;
   privacyPolicyUrl?: string;
   minDeposit: number;
+  maxDeposit: number;
   minWithdraw: number;
+  maxWithdraw: number;
+  notificationText?: string; // Admin-controlled global message
 }
 
 export interface PromoCode {
@@ -65,6 +73,7 @@ export interface PromoCode {
   claimedBy?: Record<string, boolean>;
   createdAt: number;
   requiresDeposit?: boolean;
+  requiredDepositAmount?: number;
 }
 
 export enum GameType {
