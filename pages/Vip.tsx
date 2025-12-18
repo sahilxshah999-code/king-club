@@ -1,10 +1,14 @@
+
 import React, { useEffect, useState } from 'react';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
+import { ref, onValue } from 'firebase/database';
 import { getUserProfile, getSystemSettings, claimLevelUpReward, redeemPromoCode, getReferrals } from '../services/userService';
 import { UserProfile, SystemSettings } from '../types';
-import { Crown, Star, Gift, Users, Copy, Share2, LogOut, CheckCircle, Award, Lock, ShieldCheck, ChevronDown, ChevronUp, Wallet } from 'lucide-react';
+import { Crown, Star, Gift, Users, Copy, Share2, LogOut, CheckCircle, Award, Lock, ShieldCheck, ChevronDown, ChevronUp, Wallet, Headphones } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { PromoSuccessPopup } from '../components/PromoSuccessPopup';
+
+const LOGO_URL = "https://uploads.onecompiler.io/43yf4q9cp/447x6y7wu/1000133446.png";
 
 export const Vip = () => {
     const [user, setUser] = useState<UserProfile | null>(null);
@@ -16,20 +20,24 @@ export const Vip = () => {
     const navigate = useNavigate();
 
     useEffect(() => {
-        const load = async () => {
-            const u = auth.currentUser;
+        const unsub = auth.onAuthStateChanged(async (u) => {
             if (u) {
-                const profile = await getUserProfile(u.uid);
-                setUser(profile);
+                const profileRef = ref(db, `users/${u.uid}`);
+                onValue(profileRef, async (snap) => {
+                    if (snap.exists()) {
+                        const profile = snap.val() as UserProfile;
+                        setUser(profile);
+                        const refs = await getReferrals(u.uid);
+                        setReferrals(refs);
+                    }
+                });
                 setSettings(await getSystemSettings());
-                if (profile) {
-                    const refs = await getReferrals(u.uid);
-                    setReferrals(refs);
-                }
+            } else {
+                navigate('/login');
             }
-        };
-        load();
-    }, []);
+        });
+        return () => unsub();
+    }, [navigate]);
 
     const copyToClipboard = () => {
         if(user?.referralCode) {
@@ -54,8 +62,6 @@ export const Vip = () => {
         if (!user) return;
         try {
             const amount = await claimLevelUpReward(user.uid, level);
-            const updatedProfile = await getUserProfile(user.uid);
-            setUser(updatedProfile);
             alert(`Congratulations! You claimed ₹${amount} for reaching VIP ${level}`);
         } catch (e: any) {
             alert(e.message);
@@ -63,18 +69,27 @@ export const Vip = () => {
     };
 
     const handleRedeem = async () => {
-        if (!user || !promoCode.trim()) return;
+        if (!user || !promoCode.trim()) {
+            if (!user) alert("User not logged in");
+            if (!promoCode.trim()) alert("Enter a promo code");
+            return;
+        }
         
         const res = await redeemPromoCode(user.uid, promoCode);
         
         if (res.success && res.message && res.amount) {
             setPromoResult({ message: res.message, amount: res.amount });
-            // Refresh User
-            const u = await getUserProfile(user.uid);
-            setUser(u);
             setPromoCode('');
         } else {
             alert(res.error || "Redemption Failed");
+        }
+    };
+
+    const handleSupportClick = () => {
+        if (settings?.customerServiceUrl) {
+            window.open(settings.customerServiceUrl, '_blank');
+        } else {
+            alert("Customer support is currently unavailable.");
         }
     };
 
@@ -96,6 +111,11 @@ export const Vip = () => {
             <div className="bg-gradient-to-r from-[#d93025] to-[#f52c2c] p-6 pt-10 pb-16 rounded-b-[3rem] shadow-lg text-white text-center relative overflow-hidden">
                 <div className="absolute top-[-20px] left-[-20px] opacity-10"><Crown size={150} /></div>
                 <div className="absolute bottom-[-20px] right-[-20px] opacity-10"><Star size={150} /></div>
+
+                {/* Top-left small logo */}
+                <div className="absolute top-4 left-6 w-8 h-8 rounded-full bg-white/20 backdrop-blur-md border border-white/30 overflow-hidden p-1 shadow-md">
+                   <img src={LOGO_URL} className="w-full h-full object-contain" alt="Logo" />
+                </div>
 
                 <div className="relative z-10">
                     <div className="w-20 h-20 bg-white rounded-full mx-auto mb-3 flex items-center justify-center shadow-lg border-4 border-yellow-400">
@@ -144,6 +164,23 @@ export const Vip = () => {
                         <div className="bg-gray-800 px-3 py-1 rounded-full text-xs font-bold">ACCESS</div>
                     </button>
                 )}
+
+                {/* Customer Care Button */}
+                <button 
+                    onClick={handleSupportClick}
+                    className="w-full bg-white text-gray-800 p-4 rounded-2xl flex items-center justify-between shadow-lg border border-gray-100 hover:bg-gray-50 transition"
+                >
+                    <div className="flex items-center gap-3">
+                        <div className="p-2 bg-red-100 rounded-lg">
+                            <Headphones size={24} className="text-red-600" />
+                        </div>
+                        <div className="text-left">
+                            <h3 className="font-bold">Customer Care</h3>
+                            <p className="text-xs text-gray-500">24/7 Support Service</p>
+                        </div>
+                    </div>
+                    <div className="bg-red-500 text-white px-3 py-1 rounded-full text-[10px] font-black uppercase">Online</div>
+                </button>
                 
                 {/* Mini Wallet Breakdown */}
                 <div className="bg-white p-4 rounded-2xl shadow-lg grid grid-cols-2 gap-4">
@@ -309,7 +346,7 @@ export const Vip = () => {
                                         <span className="text-[10px] text-gray-500 font-medium">Daily: ₹{dailyReward}</span>
                                     </div>
                                     <div className="flex items-center gap-1">
-                                        <Award size={12} className="text-purple-500" />
+                                      <Award size={12} className="text-purple-500" />
                                         <span className="text-[10px] text-gray-500 font-medium">Level Up: ₹{levelUpReward}</span>
                                     </div>
                                 </div>
