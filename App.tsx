@@ -12,6 +12,8 @@ import { DragonTiger } from './pages/Games/DragonTiger';
 import { Mines } from './pages/Games/Mines';
 import { Admin } from './pages/Admin';
 import { Vip } from './pages/Vip';
+import { Notifications } from './pages/Notifications';
+import { Leaderboard } from './pages/Leaderboard';
 import { Layout } from './components/Layout';
 import { NotificationSystem } from './components/NotificationSystem';
 import { Smartphone } from 'lucide-react';
@@ -37,7 +39,10 @@ const OrientationGuard = () => {
         '/game/dragontiger',
         '/game/mines',
         '/wallet',
-        '/profile'
+        '/profile',
+        '/notifications',
+        '/admin',
+        '/leaderboard'
     ];
     
     if (allowedPaths.includes(location.pathname)) return null;
@@ -72,6 +77,12 @@ const App = () => {
             } />
             <Route path="/profile" element={
                 <ProtectedRoute><Vip /></ProtectedRoute>
+            } />
+            <Route path="/notifications" element={
+                <ProtectedRoute><Notifications /></ProtectedRoute>
+            } />
+            <Route path="/leaderboard" element={
+                <ProtectedRoute><Leaderboard /></ProtectedRoute>
             } />
             
             <Route path="/game/aviator" element={
