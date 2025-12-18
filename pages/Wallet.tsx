@@ -90,11 +90,19 @@ export const Wallet = () => {
             showToast(`Minimum deposit is ₹${settings.minDeposit}`, 'error');
             return;
         }
+        if (settings?.maxDeposit && val > settings.maxDeposit) {
+            showToast(`Maximum deposit is ₹${settings.maxDeposit}`, 'error');
+            return;
+        }
     }
 
     if (activeTab === 'withdraw') {
         if (settings?.minWithdraw && val < settings.minWithdraw) {
             showToast(`Minimum withdrawal is ₹${settings.minWithdraw}`, 'error');
+            return;
+        }
+        if (settings?.maxWithdraw && val > settings.maxWithdraw) {
+            showToast(`Maximum withdrawal is ₹${settings.maxWithdraw}`, 'error');
             return;
         }
 
@@ -125,17 +133,21 @@ export const Wallet = () => {
         detailsString = method === 'UPI' ? `UPI: ${details}` : `Address: ${details}`;
     }
 
-    await createTransaction({
-        uid: user.uid,
-        type: activeTab,
-        amount: val,
-        method: method,
-        details: detailsString
-    });
-    
-    showToast(`${activeTab === 'deposit' ? 'Deposit request sent! Admin approval required.' : 'Withdrawal request sent!'}`, 'success');
-    setAmount('');
-    setDetails('');
+    try {
+        await createTransaction({
+            uid: user.uid,
+            type: activeTab,
+            amount: val,
+            method: method,
+            details: detailsString
+        });
+        
+        showToast(`${activeTab === 'deposit' ? 'Deposit request sent! Admin approval required.' : 'Withdrawal request sent!'}`, 'success');
+        setAmount('');
+        setDetails('');
+    } catch (err: any) {
+        showToast(err.message, 'error');
+    }
   };
 
   if (!settings) return <div className="p-10 text-center">Loading Wallet...</div>;
@@ -240,9 +252,10 @@ export const Wallet = () => {
                             placeholder={activeTab === 'deposit' ? `${settings.minDeposit}` : `${settings.minWithdraw}`} 
                         />
                     </div>
-                    <p className="text-[10px] text-gray-400 mt-1 pl-1">
-                        {activeTab === 'deposit' ? `Min Deposit: ₹${settings.minDeposit}` : `Min Withdrawal: ₹${settings.minWithdraw}`}
-                    </p>
+                    <div className="flex justify-between mt-1 px-1 text-[10px] font-bold text-gray-400">
+                        <span>Min: ₹{activeTab === 'deposit' ? settings.minDeposit : settings.minWithdraw}</span>
+                        <span>Max: ₹{activeTab === 'deposit' ? settings.maxDeposit : settings.maxWithdraw}</span>
+                    </div>
                 </div>
 
                 {/* Dynamic Content Based on Tab & Method */}
