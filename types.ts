@@ -3,6 +3,20 @@ export interface BannerItem {
   link?: string;
 }
 
+export interface Notification {
+  id: string;
+  title: string;
+  content: string;
+  timestamp: number;
+}
+
+export interface LeaderboardEntry {
+  name: string;
+  userId: string;
+  amount: number;
+  gender: 'male' | 'female';
+}
+
 export interface UserProfile {
   uid: string;
   numericId?: string; // 6 digit ID
@@ -27,6 +41,7 @@ export interface UserProfile {
   claimedLevelUpRewards?: number[]; 
   createdAt?: number;
   role: 'user' | 'admin';
+  hasSeenWelcome?: boolean; // New user welcome check
 }
 
 export interface Transaction {
@@ -60,7 +75,9 @@ export interface SystemSettings {
   maxDeposit: number;
   minWithdraw: number;
   maxWithdraw: number;
-  notificationText?: string; // Admin-controlled global message
+  notificationText?: string; // Legacy field
+  welcomeMessage?: string; // First-time user message
+  leaderboard?: LeaderboardEntry[]; // Top 10 fake users
 }
 
 export interface PromoCode {
