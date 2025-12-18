@@ -13,6 +13,7 @@ import { Mines } from './pages/Games/Mines';
 import { Admin } from './pages/Admin';
 import { Vip } from './pages/Vip';
 import { Layout } from './components/Layout';
+import { NotificationSystem } from './components/NotificationSystem';
 import { Smartphone } from 'lucide-react';
 import { initDemoData } from './services/userService';
 
@@ -27,8 +28,7 @@ const GameLayout = ({ children }: { children?: React.ReactNode }) => {
 // Component to conditionally enforce portrait mode
 const OrientationGuard = () => {
     const location = useLocation();
-    // Paths where landscape is allowed (Rotation rule removed)
-    // Added Aviator, Dragon Tiger, Wallet and Mines to this list
+    // Paths where landscape is allowed
     const allowedPaths = [
         '/', 
         '/login', 
@@ -40,7 +40,6 @@ const OrientationGuard = () => {
         '/profile'
     ];
     
-    // If we are on an allowed path, do not render the overlay
     if (allowedPaths.includes(location.pathname)) return null;
 
     return (
@@ -60,6 +59,7 @@ const App = () => {
   return (
     <HashRouter>
         <OrientationGuard />
+        <NotificationSystem />
         <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
