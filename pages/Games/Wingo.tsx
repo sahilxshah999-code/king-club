@@ -459,7 +459,7 @@ export const Wingo = () => {
                                      <th className="p-2">Period</th>
                                      <th className="p-2">Number</th>
                                      <th className="p-2">Big/Small</th>
-                                     <th className="p-2">Color</th>
+                                       <th className="p-2">Color</th>
                                  </tr>
                              </thead>
                              <tbody className="divide-y divide-gray-100">
@@ -562,3 +562,4 @@ export const Wingo = () => {
         </div>
     );
 };
+                
