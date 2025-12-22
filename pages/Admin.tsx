@@ -1,640 +1,563 @@
+
 import React, { useEffect, useState } from 'react';
 import { auth, db } from '../firebase';
 import { ref, onValue, update } from 'firebase/database';
-import { Transaction, SystemSettings, UserProfile, Notification, LeaderboardEntry } from '../types';
+import { Transaction, SystemSettings, UserProfile, ActivityTask, LeaderboardEntry } from '../types';
 import { 
     getUserProfile, 
     getSystemSettings, 
     updateSystemSettings, 
-    getUidFromReferralCode, 
-    getReferrals, 
     setWingoNextResult, 
     getWingoNextResult, 
     approveDeposit, 
     approveWithdrawal, 
+    rejectWithdrawal,
     createPromoCode, 
-    getAdmins, 
     findUserByEmail, 
     updateUserRole, 
     findUserByNumericId,
     publishNotification,
-    deleteNotification
+    fetchAllUsers,
+    manualTransfer,
+    settleActivityForUser,
+    getReferrals
 } from '../services/userService';
 import { 
-    ChevronLeft, Shield, CheckCircle, Gift, Users, Trash2, 
-    Settings, IndianRupee, LayoutDashboard, CreditCard, ExternalLink, 
-    Link as LinkIcon, UserPlus, Bell, PartyPopper, Trophy, Smartphone, 
-    Search, RefreshCw, Key, ShieldCheck, Globe
+    ChevronLeft, ShieldCheck, CheckCircle, Users, Trash2, 
+    Settings, IndianRupee, LayoutDashboard, CreditCard, 
+    Link as LinkIcon, Bell, Trophy, Search, Key, 
+    ClipboardList, Wallet, CheckSquare, Save, Network, Send, UserCog, Info
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-type AdminTab = 'finance' | 'link' | 'system' | 'users' | 'wingo' | 'leaderboard';
+type AdminTab = 'player' | 'link' | 'system' | 'ranking' | 'finance' | 'wingo';
 
-function snapshotToArray<T>(snapshot: any): T[] {
-    const val = snapshot.val();
-    if (!val) return [];
-    return Object.values(val) as T[];
-}
+const COMMANDS_LEGEND = (
+    <div className="bg-blue-50 border border-blue-200 p-3 rounded-xl mb-4 text-[10px] text-blue-800 space-y-1">
+        <div className="flex items-center gap-1 font-bold mb-1"><Info size={12}/> Available Placeholders:</div>
+        <div className="grid grid-cols-2 gap-1 font-mono">
+            <span>#username</span> <span>#userid</span>
+            <span>#balance</span> <span>#winbalance</span>
+            <span>#bonus</span> <span>#bet</span>
+            <span>#totaldeposit</span> <span>#lastdeposit</span>
+            <span>#userclaim</span> <span>#vip</span>
+            <span>#referearn</span> <span>#refercount</span>
+            <span>#referby</span> <span>#email</span>
+        </div>
+    </div>
+);
 
 export const Admin = () => {
     const navigate = useNavigate();
-    const [activeTab, setActiveTab] = useState<AdminTab>('finance');
+    const [activeTab, setActiveTab] = useState<AdminTab>('player');
     const [transactions, setTransactions] = useState<Transaction[]>([]);
-    const [notifications, setNotifications] = useState<Notification[]>([]);
     const [isAdmin, setIsAdmin] = useState(false);
-    const [currentAdminUid, setCurrentAdminUid] = useState('');
     const [successMessage, setSuccessMessage] = useState('');
     
     // Core Settings State
     const [settings, setSettings] = useState<SystemSettings>({
-        referralBonus: 0,
-        referralDepositBonusPercent: 0,
-        depositBonusPercent: 0,
-        homeBanners: [],
-        adminUpiId: '',
-        adminQrCodeUrl: '',
-        adminUsdtAddress: '',
-        adminUsdtQrCodeUrl: '',
-        spinPrizes: [],
-        vipThresholds: [],
-        vipDailyRewards: [],
-        vipLevelUpRewards: [],
-        customerServiceUrl: '',
-        forgotPasswordUrl: '',
-        privacyPolicyUrl: '',
-        minDeposit: 100,
-        maxDeposit: 100000,
-        minWithdraw: 100,
-        maxWithdraw: 100000,
-        welcomeMessage: '',
-        leaderboard: []
+        referralBonus: 0, referralDepositBonusPercent: 0, referralCommission: 0, depositBonusPercent: 0,
+        homeBanners: [], adminUpiId: '', adminQrCodeUrl: '', adminUsdtAddress: '',
+        adminUsdtQrCodeUrl: '', spinPrizes: [], vipThresholds: [], vipDailyRewards: [],
+        vipLevelUpRewards: [], customerServiceUrl: '', forgotPasswordUrl: '',
+        privacyPolicyUrl: '', minDeposit: 100, maxDeposit: 100000, minWithdraw: 100,
+        maxWithdraw: 100000, welcomeMessage: '', leaderboard: [], loginPopupTitle: '', loginPopupMessage: '',
+        activities: []
     });
     
-    // Config Strings
-    const [spinPrizesStr, setSpinPrizesStr] = useState('');
-    const [vipThresholdsStr, setVipThresholdsStr] = useState('');
-    const [vipDailyStr, setVipDailyStr] = useState('');
-    const [vipLevelUpStr, setVipLevelUpStr] = useState('');
-    const [lbEntries, setLbEntries] = useState<LeaderboardEntry[]>([]);
-
-    // Users & Search State
-    const [userDetailsInput, setUserDetailsInput] = useState('');
+    // -- PLAYER TAB STATE --
+    const [playerSearchInput, setPlayerSearchInput] = useState('');
     const [searchedUser, setSearchedUser] = useState<UserProfile | null>(null);
-    const [isSearching, setIsSearching] = useState(false);
-    const [searchRefInput, setSearchRefInput] = useState('');
-    const [referredUsers, setReferredUsers] = useState<UserProfile[]>([]);
-    const [isRefSearching, setIsRefSearching] = useState(false);
-    const [searchStatus, setSearchStatus] = useState('');
+    const [teamSearchId, setTeamSearchId] = useState('');
+    const [teamData, setTeamData] = useState<UserProfile[]>([]);
     
-    // Promo Code Creator State
-    const [promoCode, setPromoCode] = useState('');
-    const [promoAmount, setPromoAmount] = useState<number | ''>('');
-    const [promoUsers, setPromoUsers] = useState<number | ''>('');
-    const [promoDays, setPromoDays] = useState<number | ''>('');
-    const [promoMsg, setPromoMsg] = useState('Congratulations #username! Here is your gift of ₹#amount.');
-    const [promoRequiredDeposit, setPromoRequiredDeposit] = useState<number | ''>('');
+    // Gift Code State
+    const [giftCode, setGiftCode] = useState('');
+    const [giftAmount, setGiftAmount] = useState<number | ''>('');
+    const [giftMaxUsers, setGiftMaxUsers] = useState<number | ''>('');
+    const [giftExpiryDate, setGiftExpiryDate] = useState(''); 
+    const [giftMinDep, setGiftMinDep] = useState<number | ''>('');
+    const [giftMsg, setGiftMsg] = useState('Gift Code Reward');
+    
+    const [privateId, setPrivateId] = useState('');
+    const [privateSubject, setPrivateSubject] = useState('');
+    const [privateMsg, setPrivateMsg] = useState('');
+    const [settleId, setSettleId] = useState('');
+    const [settleActId, setSettleActId] = useState('');
+    const [settleAmt, setSettleAmt] = useState<number | ''>('');
+    const [manualId, setManualId] = useState('');
+    const [manualAmt, setManualAmt] = useState<number | ''>('');
+    const [manualMsg, setManualMsg] = useState('System Adjustment');
 
-    // Announcements State
-    const [notifTitle, setNotifTitle] = useState('');
-    const [notifContent, setNotifContent] = useState('');
+    // -- SYSTEM TAB STATE --
+    const [actTitle, setActTitle] = useState('');
+    const [actDesc, setActDesc] = useState('');
+    const [actAmt, setActAmt] = useState<number | ''>('');
+    const [newBannerUrl, setNewBannerUrl] = useState('');
+    const [newBannerLink, setNewBannerLink] = useState('');
+    const [broadcastTitle, setBroadcastTitle] = useState('');
+    const [broadcastMsg, setBroadcastMsg] = useState('');
 
-    // Game Control
-    const [wingoResultInput, setWingoResultInput] = useState<number | ''>('');
-    const [currentWingoForced, setCurrentWingoForced] = useState<number | null>(null);
+    // -- LINK TAB STRINGS (For Array Parsing) --
+    const [vipTiersStr, setVipTiersStr] = useState('');
 
-    // Admin List
-    const [adminList, setAdminList] = useState<UserProfile[]>([]);
-    const [newAdminEmail, setNewAdminEmail] = useState('');
+    // -- GAME CONTROL --
+    const [wingoForced, setWingoForced] = useState<number | null>(null);
+    const [wingoInput, setWingoInput] = useState<number | ''>('');
 
     useEffect(() => {
-        const checkAdminStatus = async () => {
-            const u = auth.currentUser;
+        auth.onAuthStateChanged(async (u) => {
             if(u) {
-                setCurrentAdminUid(u.uid);
                 const profile = await getUserProfile(u.uid);
-                if(profile?.role === 'admin') {
-                    setIsAdmin(true);
-                    loadAdmins();
-                } else { navigate('/'); }
-            } else { navigate('/login'); }
-        };
-        checkAdminStatus();
-
-        // Transaction Listener
-        const txRef = ref(db, 'transactions');
-        const unsubTx = onValue(txRef, (snap) => {
-            const data = snapshotToArray<Transaction>(snap);
-            data.sort((a, b) => b.timestamp - a.timestamp);
-            setTransactions(data);
+                if(profile?.role === 'admin') setIsAdmin(true);
+                else navigate('/');
+            } else navigate('/login');
         });
 
-        // Notifications Listener
-              const notifRef = ref(db, 'notifications');
-        const unsubNotif = onValue(notifRef, (snap) => {
+        const unsubTx = onValue(ref(db, 'transactions'), (snap) => {
             if (snap.exists()) {
-                const data = Object.values(snap.val()) as Notification[];
+                const data = Object.values(snap.val()) as Transaction[];
                 data.sort((a, b) => b.timestamp - a.timestamp);
-                setNotifications(data);
-            } else { setNotifications([]); }
-        });
-
-        // System Settings Loader
-        getSystemSettings().then(s => {
-            setSettings(s);
-            setSpinPrizesStr(s.spinPrizes ? s.spinPrizes.join(', ') : '');
-            setVipThresholdsStr(s.vipThresholds ? s.vipThresholds.join(', ') : '');
-            setVipDailyStr(s.vipDailyRewards ? s.vipDailyRewards.join(', ') : '');
-            setVipLevelUpStr(s.vipLevelUpRewards ? s.vipLevelUpRewards.join(', ') : '');
-            if (s.leaderboard && s.leaderboard.length > 0) { 
-                setLbEntries(s.leaderboard); 
-            } else { 
-                setLbEntries(Array.from({ length: 10 }, () => ({ name: '', userId: '', amount: 0, gender: 'male' }))); 
+                setTransactions(data);
             }
         });
 
-        getWingoNextResult().then(setCurrentWingoForced);
-        return () => { unsubTx(); unsubNotif(); };
+        getSystemSettings().then(s => {
+            setSettings(s);
+            setVipTiersStr(s.vipThresholds?.join(', ') || '');
+        });
+        getWingoNextResult().then(setWingoForced);
+        
+        return () => unsubTx();
     }, [navigate]);
 
-    const loadAdmins = async () => setAdminList(await getAdmins());
     const showSuccess = (msg: string) => { setSuccessMessage(msg); setTimeout(() => setSuccessMessage(''), 3000); };
 
+    // --- HANDLERS ---
+
+    const handleSaveSettings = async (partialSettings: Partial<SystemSettings>, msg = "Settings Saved") => {
+        const newSettings = { ...settings, ...partialSettings };
+        await updateSystemSettings(newSettings);
+        setSettings(newSettings);
+        showSuccess(msg);
+    };
+
     const handleAction = async (tx: Transaction, action: 'approved' | 'rejected') => {
-        if(!isAdmin) return;
         await update(ref(db, `transactions/${tx.id}`), { status: action });
         if(action === 'approved') {
             if (tx.type === 'deposit') await approveDeposit(tx.uid, tx.amount);
             else if (tx.type === 'withdraw') await approveWithdrawal(tx.uid, tx.amount);
+        } else if (action === 'rejected' && tx.type === 'withdraw') {
+            await rejectWithdrawal(tx.uid, tx.amount);
         }
-        showSuccess(`Transaction ${action}`);
+        showSuccess(`Tx ${action}`);
     };
 
-    const saveSettings = async () => {
-        const prizes = spinPrizesStr.split(',').map(s => parseInt(s.trim()) || 0);
-        const thresholds = vipThresholdsStr.split(',').map(s => parseInt(s.trim()) || 0);
-        const dailyRewards = vipDailyStr.split(',').map(s => parseInt(s.trim()) || 0);
-        const levelUpRewards = vipLevelUpStr.split(',').map(s => parseInt(s.trim()) || 0);
+    // Player Tab Handlers
+    const handlePlayerSearch = async () => {
+        if (!playerSearchInput) return;
+        const u = await findUserByNumericId(playerSearchInput) || await findUserByEmail(playerSearchInput);
+        setSearchedUser(u);
+        if(!u) alert("Player not found.");
+    };
+
+    const handleTeamSearch = async () => {
+        if(!teamSearchId) return;
+        const u = await findUserByNumericId(teamSearchId);
+        if(!u) { alert("Leader not found"); return; }
+        const referrals = await getReferrals(u.uid);
+        setTeamData(referrals);
+    };
+
+    const handleCreateGift = async () => {
+        if(!giftCode || !giftAmount || !giftExpiryDate) return alert("Fill Code, Amount and Expiry Date.");
         
-        const newSettings = { 
-            ...settings, 
-            spinPrizes: prizes, 
-            vipThresholds: thresholds, 
-            vipDailyRewards: dailyRewards, 
-            vipLevelUpRewards: levelUpRewards, 
-            leaderboard: lbEntries 
-        };
-        
-        await updateSystemSettings(newSettings);
-        setSettings(newSettings);
-        showSuccess("System Settings Saved!");
-    };
+        const expiryTimestamp = new Date(giftExpiryDate).getTime();
+        if (expiryTimestamp <= Date.now()) return alert("Expiry date must be in the future.");
 
-    const handlePublishNotification = async () => {
-        if (!notifTitle.trim() || !notifContent.trim()) return;
-        await publishNotification(notifTitle.trim(), notifContent.trim());
-        setNotifTitle(''); setNotifContent(''); showSuccess("Notification Broadcasted!");
-    };
-
-    const handleDeleteNotif = async (id: string) => { 
-        if (window.confirm("Delete notification?")) { 
-            await deleteNotification(id); 
-            showSuccess("Notification Removed"); 
-        } 
-    };
-
-    const handleUserSearch = async () => {
-        if(!userDetailsInput.trim()) return;
-        setIsSearching(true);
-        setSearchedUser(null);
-        const input = userDetailsInput.trim();
-        let user = await findUserByNumericId(input) || await findUserByEmail(input) || await getUserProfile(input);
-        setSearchedUser(user);
-        setIsSearching(false);
-        if(!user) alert("Player not found");
-    };
-
-    const handleReferralSearch = async () => {
-        if (!searchRefInput.trim()) return;
-        setIsRefSearching(true);
-        setSearchStatus('Searching Team...');
-        setReferredUsers([]);
-        
-        let targetUid = searchRefInput.trim();
-        if (targetUid.length < 15) {
-            const resolved = await getUidFromReferralCode(targetUid);
-            if (resolved) targetUid = resolved;
-            else {
-                const user = await findUserByNumericId(targetUid);
-                if (user) targetUid = user.uid;
-                else {
-                    setSearchStatus('No user found for this Code/ID');
-                    setIsRefSearching(false);
-                    return;
-                }
-            }
-        }
-        const referrals = await getReferrals(targetUid);
-        setReferredUsers(referrals);
-        setSearchStatus(referrals.length > 0 ? `Found ${referrals.length} referrals` : 'No team members found');
-        setIsRefSearching(false);
-    };
-
-    const handleCreatePromo = async () => {
-        if (!promoCode || !promoAmount || !promoUsers || !promoDays) { 
-            alert("All fields are required"); 
-            return; 
-        }
         await createPromoCode(
-            promoCode.trim().toUpperCase(), 
-            Number(promoAmount), 
-            Number(promoUsers), 
-            Number(promoDays), 
-            promoMsg, 
-            Number(promoRequiredDeposit) > 0, 
-            Number(promoRequiredDeposit) || 0
+            giftCode.toUpperCase(), 
+            Number(giftAmount), 
+            Number(giftMaxUsers) || 100, 
+            expiryTimestamp, 
+            giftMsg, 
+            Number(giftMinDep) > 0, 
+            Number(giftMinDep) || 0
         );
         showSuccess("Gift Code Created!");
-        setPromoCode(''); setPromoAmount('');
+        setGiftCode(''); setGiftAmount(''); setGiftExpiryDate('');
     };
 
-    const handleAddAdmin = async () => {
-        if (!newAdminEmail.trim()) return;
-        const user = await findUserByEmail(newAdminEmail);
-        if (!user) { alert("User not found"); return; }
-        if(window.confirm(`Promote ${user.displayName} to Admin?`)) { 
-            await updateUserRole(user.uid, 'admin'); 
-            showSuccess("User Promoted"); 
-            setNewAdminEmail(''); 
-            loadAdmins(); 
-        }
+    const handlePrivateAlert = async () => {
+        const u = await findUserByNumericId(privateId);
+        if(!u) return alert("User not found");
+        await publishNotification(privateSubject || "System Message", privateMsg, u.uid);
+        showSuccess("Message Sent");
+        setPrivateId(''); setPrivateMsg('');
     };
 
-    const handleWingoControl = async (reset: boolean = false) => {
-        if (reset) { 
-            await setWingoNextResult(null); 
-            setCurrentWingoForced(null); 
-            setWingoResultInput(''); 
-            showSuccess("Switched to Auto Mode"); 
-        } else {
-            const val = Number(wingoResultInput);
-            if (wingoResultInput === '' || isNaN(val) || val < 0 || val > 9) { 
-                alert("Enter 0-9"); 
-                return; 
-            }
-            await setWingoNextResult(val); 
-            setCurrentWingoForced(val); 
-            showSuccess("Next Round Forced: " + val);
-        }
+    const handleSettleActivity = async () => {
+        if(!settleId || !settleActId || !settleAmt) return alert("Missing fields");
+        try {
+            await settleActivityForUser(settleId, settleActId, Number(settleAmt), "Activity Reward");
+            showSuccess(`Paid ${settleId}`);
+        } catch(e:any) { alert(e.message); }
     };
 
-    const updateLbEntry = (index: number, field: keyof LeaderboardEntry, value: any) => {
-        const newEntries = [...lbEntries]; 
-        newEntries[index] = { ...newEntries[index], [field]: value }; 
-        setLbEntries(newEntries);
+    const handleManualPay = async () => {
+        if(!manualId || !manualAmt) return alert("Missing fields");
+        try {
+            await manualTransfer(manualId, Number(manualAmt), manualMsg);
+            showSuccess(`Transferred to ${manualId}`);
+        } catch(e:any) { alert(e.message); }
+    };
+    
+    // Link/System Handlers
+    const handleAddActivity = async () => {
+        if(!actTitle || !actAmt) return alert("Title/Amount needed");
+        const newTask: ActivityTask = { id: Math.random().toString(36).substring(2,9), title: actTitle, description: actDesc, amount: Number(actAmt), timestamp: Date.now() };
+        const newActs = [...(settings.activities || []), newTask];
+        handleSaveSettings({ activities: newActs }, "Activity Created");
+        setActTitle(''); setActAmt('');
     };
 
-    if(!isAdmin) return <div className="p-20 text-center font-black text-red-600">UNAUTHORIZED ACCESS</div>;
+    const handleAddBanner = async () => {
+        if(!newBannerUrl) return;
+        const newBanners = [...(settings.homeBanners || []), { imageUrl: newBannerUrl, link: newBannerLink }];
+        handleSaveSettings({ homeBanners: newBanners }, "Banner Added");
+        setNewBannerUrl('');
+    };
 
-    const navItemClass = (tab: AdminTab) => `flex-1 py-4 text-[10px] font-black uppercase tracking-tight flex flex-col items-center gap-1 ${activeTab === tab ? 'text-black border-b-4 border-black' : 'text-gray-400 hover:bg-gray-100 transition'}`;
+    const handleRankingUpdate = async (index: number, field: keyof LeaderboardEntry, value: any) => {
+        const list = [...(settings.leaderboard || [])];
+        // Ensure list is populated
+        while(list.length <= index) list.push({ name: 'Player', userId: '000000', amount: 0, gender: 'male' });
+        list[index] = { ...list[index], [field]: value };
+        setSettings({ ...settings, leaderboard: list });
+    };
+
+    if(!isAdmin) return null;
+
+    const navBtn = (id: AdminTab, label: string, Icon: any) => (
+        <button onClick={() => setActiveTab(id)} className={`flex-1 py-4 flex flex-col items-center gap-1 text-[10px] font-black uppercase transition-all ${activeTab === id ? 'text-black border-b-4 border-black bg-gray-50' : 'text-gray-400 hover:text-gray-600'}`}>
+            <Icon size={18} strokeWidth={2.5}/> {label}
+        </button>
+    );
 
     return (
-        <div className="bg-[#f0f2f5] min-h-screen pb-20">
-            {/* Nav Header */}
-            <div className="bg-black text-white p-4 shadow-xl sticky top-0 z-[100]">
-                <div className="flex items-center justify-between mb-4 px-2">
+        <div className="bg-[#f0f2f5] min-h-screen pb-20 font-sans">
+            <div className="bg-black text-white p-4 sticky top-0 z-[100] shadow-2xl">
+                <div className="flex items-center gap-4 mb-4">
                     <button onClick={() => navigate('/profile')} className="p-2 bg-white/10 rounded-full"><ChevronLeft size={20}/></button>
-                    <h1 className="text-lg font-black italic tracking-widest flex items-center gap-2">
-                        <ShieldCheck size={20} className="text-blue-500" fill="currentColor"/> ADMIN CONSOLE
-                    </h1>
-                    <div className="w-8"></div>
+                    <h1 className="font-black italic tracking-widest uppercase text-lg flex items-center gap-2"><ShieldCheck className="text-blue-500" /> ADMIN PANEL</h1>
                 </div>
-                <div className="flex bg-white rounded-2xl overflow-hidden shadow-inner">
-                    <button onClick={() => setActiveTab('finance')} className={navItemClass('finance')}><IndianRupee size={16}/> Finance</button>
-                    <button onClick={() => setActiveTab('users')} className={navItemClass('users')}><Users size={16}/> Players</button>
-                    <button onClick={() => setActiveTab('link')} className={navItemClass('link')}><LinkIcon size={16}/> Links</button>
-                    <button onClick={() => setActiveTab('system')} className={navItemClass('system')}><Settings size={16}/> System</button>
-                    <button onClick={() => setActiveTab('leaderboard')} className={navItemClass('leaderboard')}><Trophy size={16}/> Rankings</button>
-                    <button onClick={() => setActiveTab('wingo')} className={navItemClass('wingo')}><LayoutDashboard size={16}/> Game</button>
+                <div className="flex bg-white rounded-2xl overflow-x-auto no-scrollbar shadow-inner p-1">
+                    {navBtn('player', 'Player', Users)}
+                    {navBtn('link', 'Link', LinkIcon)}
+                    {navBtn('system', 'System', Settings)}
+                    {navBtn('ranking', 'Rank', Trophy)}
+                    {navBtn('finance', 'Pay', IndianRupee)}
+                    {navBtn('wingo', 'Game', LayoutDashboard)}
                 </div>
             </div>
 
-            <div className="p-4 space-y-6">
-                {/* FINANCE TAB: PENDING TRANSACTIONS */}
-                {activeTab === 'finance' && (
-                    <div className="space-y-4">
-                        <h2 className="text-black font-black text-lg border-l-4 border-red-600 pl-3">Pending Requests</h2>
-                        {transactions.filter(t => t.status === 'pending').map(tx => (
-                            <div key={tx.id} className="bg-white p-5 rounded-2xl shadow-md border border-gray-100">
-                                <div className="flex justify-between items-start mb-3">
-                                    <div>
-                                        <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${tx.type === 'deposit' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                                            {tx.type}
-                                        </span>
-                                        <p className="text-xs text-gray-500 mt-2 font-mono">{new Date(tx.timestamp).toLocaleString()}</p>
-                                    </div>
-                                    <span className="text-2xl font-black text-black">₹{tx.amount}</span>
-                                </div>
-                                <div className="bg-gray-50 p-3 rounded-xl mb-4 font-mono text-[11px] break-all border border-gray-200">
-                                    {tx.details}
-                                </div>
-                                <div className="flex gap-3">
-                                    <button onClick={() => handleAction(tx, 'approved')} className="flex-1 bg-green-600 text-white font-black py-3 rounded-xl shadow-lg active:scale-95 transition uppercase text-xs">Approve</button>
-                                    <button onClick={() => handleAction(tx, 'rejected')} className="flex-1 bg-red-600 text-white font-black py-3 rounded-xl shadow-lg active:scale-95 transition uppercase text-xs">Reject</button>
-                                </div>
-                            </div>
-                        ))}
-                        {transactions.filter(t => t.status === 'pending').length === 0 && (
-                            <div className="text-center py-20 text-gray-400 font-bold italic">No pending requests</div>
-                        )}
-                    </div>
-                )}
-
-                {/* PLAYERS TAB: SEARCH, TEAM, GIFTS, ADMINS */}
-                {activeTab === 'users' && (
-                    <div className="space-y-6">
-                        {/* Player Explorer */}
+            <div className="p-4 max-w-lg mx-auto space-y-6">
+                
+                {/* 1. PLAYER TAB */}
+                {activeTab === 'player' && (
+                    <div className="space-y-8">
+                        {/* Player Management */}
                         <div className="bg-white p-6 rounded-[2rem] shadow-xl">
-                            <h3 className="font-black text-black uppercase tracking-wider mb-4 flex items-center gap-2"><Search size={18}/> Player Explorer</h3>
-                            <div className="flex gap-2">
-                                <input type="text" placeholder="ID / Email / UID" value={userDetailsInput} onChange={e => setUserDetailsInput(e.target.value)} className="flex-1 bg-gray-100 p-3 rounded-xl text-sm font-bold outline-none border-2 border-transparent focus:border-black transition" />
-                                <button onClick={handleUserSearch} className="bg-black text-white px-5 rounded-xl font-black text-xs uppercase shadow-lg">Find</button>
+                            <h3 className="font-black uppercase text-xs mb-4 text-blue-600 flex gap-2"><UserCog size={14}/> 1. Player Management</h3>
+                            <div className="flex gap-2 mb-4">
+                                <input placeholder="ID or Email" value={playerSearchInput} onChange={e => setPlayerSearchInput(e.target.value)} className="flex-1 bg-gray-50 p-3 rounded-xl text-sm border font-bold" />
+                                <button onClick={handlePlayerSearch} className="bg-blue-600 text-white px-4 rounded-xl font-bold text-xs uppercase">Find</button>
                             </div>
                             {searchedUser && (
-                                <div className="mt-4 p-4 bg-gray-50 rounded-2xl border-2 border-gray-200 animate-fade-in">
-                                    <div className="flex justify-between mb-2">
-                                        <p className="font-black text-black">{searchedUser.displayName}</p>
-                                        <span className="font-mono text-xs text-gray-500">ID: {searchedUser.numericId}</span>
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2 text-xs font-bold">
-                                        <div className="bg-white p-2 rounded-lg">Bal: <span className="text-green-600">₹{searchedUser.balance.toFixed(2)}</span></div>
-                                        <div className="bg-white p-2 rounded-lg">Wager: ₹{searchedUser.totalWagered}</div>
-                                        <div className="bg-white p-2 rounded-lg">Deps: ₹{searchedUser.totalDeposited}</div>
-                                        <div className="bg-white p-2 rounded-lg">Role: {searchedUser.role}</div>
+                                <div className="p-4 bg-blue-50 rounded-2xl text-xs space-y-2">
+                                    <p><strong>Name:</strong> {searchedUser.displayName}</p>
+                                    <p><strong>Role:</strong> {searchedUser.role}</p>
+                                    <p><strong>Balance:</strong> ₹{searchedUser.balance}</p>
+                                    <p><strong>Refs:</strong> {searchedUser.referralCount || 0}</p>
+                                    <div className="flex gap-2 mt-2">
+                                        <button onClick={() => updateUserRole(searchedUser.uid, 'admin').then(() => showSuccess("Promoted"))} className="bg-black text-white px-2 py-1 rounded">Make Admin</button>
+                                        <button onClick={() => updateUserRole(searchedUser.uid, 'demo').then(() => showSuccess("Demo Mode"))} className="bg-gray-500 text-white px-2 py-1 rounded">Make Demo</button>
+                                        <button onClick={() => updateUserRole(searchedUser.uid, 'user').then(() => showSuccess("Demoted"))} className="bg-blue-500 text-white px-2 py-1 rounded">Make User</button>
                                     </div>
                                 </div>
                             )}
                         </div>
 
-                        {/* Team Lookup */}
+                        {/* Team Hierarchy */}
                         <div className="bg-white p-6 rounded-[2rem] shadow-xl">
-                            <h3 className="font-black text-black uppercase tracking-wider mb-4 flex items-center gap-2"><Users size={18}/> Team Lookup</h3>
-                            <div className="flex gap-2 mb-3">
-                                <input type="text" placeholder="Ref Code / Player ID" value={searchRefInput} onChange={e => setSearchRefInput(e.target.value)} className="flex-1 bg-gray-100 p-3 rounded-xl text-sm font-bold outline-none" />
-                                <button onClick={handleReferralSearch} className="bg-green-600 text-white px-5 rounded-xl font-black text-xs uppercase shadow-lg">Scan</button>
-                            </div>
-                            {searchStatus && <p className="text-[10px] font-black text-gray-500 uppercase px-2 mb-2">{searchStatus}</p>}
-                            <div className="max-h-40 overflow-y-auto space-y-2">
-                                {referredUsers.map(u => (
-                                    <div key={u.uid} className="flex justify-between items-center p-2 bg-gray-50 rounded-lg text-[11px] font-bold border border-gray-100">
-                                        <span>{u.displayName} ({u.numericId})</span>
-                                        <span className="text-green-600">₹{u.balance.toFixed(0)}</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Gift Code Creator */}
-                        <div className="bg-white p-6 rounded-[2rem] shadow-xl">
-                            <h3 className="font-black text-black uppercase tracking-wider mb-6 flex items-center gap-2 text-red-600"><Key size={18}/> Gift Code Creator</h3>
-                            <div className="space-y-4">
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="text-[10px] font-black text-gray-400 uppercase mb-1 block ml-1">Code</label>
-                                        <input type="text" placeholder="KING777" value={promoCode} onChange={e => setPromoCode(e.target.value)} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none" />
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-black text-gray-400 uppercase mb-1 block ml-1">Reward ₹</label>
-                                        <input type="number" placeholder="100" value={promoAmount} onChange={e => setPromoAmount(e.target.value === '' ? '' : Number(e.target.value))} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none" />
-                                    </div>
-                                </div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <div>
-                                        <label className="text-[10px] font-black text-gray-400 uppercase mb-1 block ml-1">Max Claims</label>
-                                        <input type="number" placeholder="10" value={promoUsers} onChange={e => setPromoUsers(e.target.value === '' ? '' : Number(e.target.value))} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none" />
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-black text-gray-400 uppercase mb-1 block ml-1">Valid (Days)</label>
-                                        <input type="number" placeholder="7" value={promoDays} onChange={e => setPromoDays(e.target.value === '' ? '' : Number(e.target.value))} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none" />
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-black text-gray-400 uppercase mb-1 block ml-1">Min Cumulative Deposit To Claim (₹)</label>
-                                    <input type="number" placeholder="0 = No requirement" value={promoRequiredDeposit} onChange={e => setPromoRequiredDeposit(e.target.value === '' ? '' : Number(e.target.value))} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none" />
-                                </div>
-                                <div>
-                                    <label className="text-[10px] font-black text-gray-400 uppercase mb-1 block ml-1">Claim Success Message</label>
-                                    <textarea value={promoMsg} onChange={e => setPromoMsg(e.target.value)} className="w-full bg-gray-100 p-3 rounded-xl font-bold text-[11px] h-20 outline-none" />
-                                </div>
-                                <button onClick={handleCreatePromo} className="w-full bg-red-600 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition uppercase tracking-widest text-sm">Generate Gift Code</button>
-                            </div>
-                        </div>
-
-                        {/* Admin Management */}
-                        <div className="bg-white p-6 rounded-[2rem] shadow-xl">
-                            <h3 className="font-black text-black uppercase tracking-wider mb-4 flex items-center gap-2"><Shield size={18}/> Admin Management</h3>
+                            <h3 className="font-black uppercase text-xs mb-4 text-indigo-600 flex gap-2"><Network size={14}/> 2. Team Hierarchy</h3>
                             <div className="flex gap-2 mb-4">
-                                <input type="email" placeholder="Email Address" value={newAdminEmail} onChange={e => setNewAdminEmail(e.target.value)} className="flex-1 bg-gray-100 p-3 rounded-xl text-sm font-bold outline-none" />
-                                <button onClick={handleAddAdmin} className="bg-blue-600 text-white px-4 rounded-xl font-black text-xs uppercase">Promote</button>
+                                <input placeholder="Upline ID" value={teamSearchId} onChange={e => setTeamSearchId(e.target.value)} className="flex-1 bg-gray-50 p-3 rounded-xl text-sm border font-bold" />
+                                <button onClick={handleTeamSearch} className="bg-indigo-600 text-white px-4 rounded-xl font-bold text-xs uppercase">Show</button>
                             </div>
-                            <div className="space-y-2">
-                                {adminList.map(adm => (
-                                    <div key={adm.uid} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border border-gray-100 shadow-sm">
-                                        <div className="flex flex-col">
-                                            <span className="text-xs font-black text-gray-900">{adm.displayName}</span>
-                                            <span className="text-[9px] text-gray-500 font-mono">{adm.email}</span>
+                            {teamData.length > 0 && (
+                                <div className="max-h-40 overflow-y-auto bg-gray-50 p-2 rounded-xl">
+                                    {teamData.map(u => (
+                                        <div key={u.uid} className="flex justify-between p-2 border-b text-xs">
+                                            <span>{u.displayName} ({u.numericId})</span>
+                                            <span className="font-bold">₹{u.balance.toFixed(0)}</span>
                                         </div>
-                                        {adm.uid !== currentAdminUid && (
-                                            <button onClick={() => updateUserRole(adm.uid, 'user').then(loadAdmins)} className="text-red-500 p-2"><Trash2 size={16}/></button>
-                                        )}
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Gift Code */}
+                        <div className="bg-white p-6 rounded-[2rem] shadow-xl">
+                            <h3 className="font-black uppercase text-xs mb-4 text-red-600 flex gap-2"><Key size={14}/> 3. Gift Code</h3>
+                            {COMMANDS_LEGEND}
+                            <div className="grid grid-cols-2 gap-2 mb-2">
+                                <input placeholder="Code" value={giftCode} onChange={e => setGiftCode(e.target.value)} className="bg-gray-50 p-3 rounded-xl text-xs font-bold border" />
+                                <input placeholder="Amount" type="number" value={giftAmount} onChange={e => setGiftAmount(e.target.value===''?'':Number(e.target.value))} className="bg-gray-50 p-3 rounded-xl text-xs font-bold border" />
+                                <input placeholder="Max Users" type="number" value={giftMaxUsers} onChange={e => setGiftMaxUsers(e.target.value===''?'':Number(e.target.value))} className="bg-gray-50 p-3 rounded-xl text-xs font-bold border" />
+                                <input placeholder="Min Dep" type="number" value={giftMinDep} onChange={e => setGiftMinDep(e.target.value===''?'':Number(e.target.value))} className="bg-gray-50 p-3 rounded-xl text-xs font-bold border" />
                             </div>
+                            <div className="mb-2">
+                                <label className="text-[10px] text-gray-400 font-bold block mb-1">Expiry Date & Time</label>
+                                <input type="datetime-local" value={giftExpiryDate} onChange={e => setGiftExpiryDate(e.target.value)} className="w-full bg-gray-50 p-3 rounded-xl text-xs font-bold border" />
+                            </div>
+                            <input placeholder="Custom Message (Use placeholders)" value={giftMsg} onChange={e => setGiftMsg(e.target.value)} className="w-full bg-gray-50 p-3 rounded-xl text-xs font-bold border mb-2" />
+                            <button onClick={handleCreateGift} className="w-full bg-red-600 text-white py-3 rounded-xl font-bold uppercase text-xs">Create Code</button>
+                        </div>
+
+                        {/* Private Alert */}
+                        <div className="bg-white p-6 rounded-[2rem] shadow-xl">
+                            <h3 className="font-black uppercase text-xs mb-4 text-orange-500 flex gap-2"><Bell size={14}/> 4. Private Alert</h3>
+                            {COMMANDS_LEGEND}
+                            <input placeholder="Target ID" value={privateId} onChange={e => setPrivateId(e.target.value)} className="w-full bg-gray-50 p-3 rounded-xl text-xs font-bold border mb-2" />
+                            <input placeholder="Subject" value={privateSubject} onChange={e => setPrivateSubject(e.target.value)} className="w-full bg-gray-50 p-3 rounded-xl text-xs font-bold border mb-2" />
+                            <textarea placeholder="Message... (Use placeholders)" value={privateMsg} onChange={e => setPrivateMsg(e.target.value)} className="w-full bg-gray-50 p-3 rounded-xl text-xs font-bold border mb-2 h-16" />
+                            <button onClick={handlePrivateAlert} className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold uppercase text-xs">Send Alert</button>
+                        </div>
+
+                        {/* Activity Settlement */}
+                        <div className="bg-white p-6 rounded-[2rem] shadow-xl">
+                            <h3 className="font-black uppercase text-xs mb-4 text-teal-600 flex gap-2"><CheckSquare size={14}/> 6. Activity Settlement</h3>
+                            <input placeholder="Target ID" value={settleId} onChange={e => setSettleId(e.target.value)} className="w-full bg-gray-50 p-3 rounded-xl text-xs font-bold border mb-2" />
+                            <select value={settleActId} onChange={e => {setSettleActId(e.target.value); const a = settings.activities?.find(x=>x.id===e.target.value); if(a) setSettleAmt(a.amount);}} className="w-full bg-gray-50 p-3 rounded-xl text-xs font-bold border mb-2">
+                                <option value="">Select Activity</option>
+                                {settings.activities?.map(a => <option key={a.id} value={a.id}>{a.title}</option>)}
+                            </select>
+                            <input placeholder="Amount" type="number" value={settleAmt} onChange={e => setSettleAmt(Number(e.target.value))} className="w-full bg-gray-50 p-3 rounded-xl text-xs font-bold border mb-2" />
+                            <button onClick={handleSettleActivity} className="w-full bg-teal-600 text-white py-3 rounded-xl font-bold uppercase text-xs">Pay</button>
+                        </div>
+
+                        {/* Manual Payment */}
+                        <div className="bg-white p-6 rounded-[2rem] shadow-xl">
+                            <h3 className="font-black uppercase text-xs mb-4 text-green-600 flex gap-2"><Wallet size={14}/> 7. Manual Payment</h3>
+                            {COMMANDS_LEGEND}
+                            <input placeholder="Target ID" value={manualId} onChange={e => setManualId(e.target.value)} className="w-full bg-gray-50 p-3 rounded-xl text-xs font-bold border mb-2" />
+                            <input placeholder="Amount" type="number" value={manualAmt} onChange={e => setManualAmt(Number(e.target.value))} className="w-full bg-gray-50 p-3 rounded-xl text-xs font-bold border mb-2" />
+                            <input placeholder="Command/Message (Use placeholders)" value={manualMsg} onChange={e => setManualMsg(e.target.value)} className="w-full bg-gray-50 p-3 rounded-xl text-xs font-bold border mb-2" />
+                            <button onClick={handleManualPay} className="w-full bg-green-600 text-white py-3 rounded-xl font-bold uppercase text-xs">Execute</button>
                         </div>
                     </div>
                 )}
 
-                {/* LINKS TAB: BONUSES, VIP, PAYMENT & SUPPORT LINKS */}
+                {/* 2. LINK TAB */}
                 {activeTab === 'link' && (
                     <div className="space-y-6">
-                        {/* Economy Variables */}
+                        {/* Economy Commission */}
                         <div className="bg-white p-6 rounded-[2rem] shadow-xl">
-                            <h3 className="font-black text-black uppercase tracking-wider mb-6 flex items-center gap-2"><Settings size={18}/> Economy Variables</h3>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="text-[11px] font-black text-gray-500 uppercase ml-1">Sign-Up Bonus (₹)</label>
-                                    <input type="number" value={settings.referralBonus} onChange={e => setSettings({...settings, referralBonus: Number(e.target.value)})} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none mt-1" />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-black text-gray-500 uppercase ml-1">Referral Deposit Commission (%)</label>
-                                    <input type="number" value={settings.referralDepositBonusPercent} onChange={e => setSettings({...settings, referralDepositBonusPercent: Number(e.target.value)})} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none mt-1" />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-black text-gray-500 uppercase ml-1">User Deposit Bonus (%)</label>
-                                    <input type="number" value={settings.depositBonusPercent} onChange={e => setSettings({...settings, depositBonusPercent: Number(e.target.value)})} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none mt-1" />
-                                </div>
-                                <div className="pt-4 border-t border-gray-100">
-                                    <h4 className="text-[10px] font-black text-blue-600 uppercase mb-3">VIP Tier Management</h4>
-                                    <div className="space-y-3">
-                                        <div>
-                                            <label className="text-[9px] font-black text-gray-400 uppercase ml-1">Wager Thresholds (10 Values)</label>
-                                            <textarea value={vipThresholdsStr} onChange={e => setVipThresholdsStr(e.target.value)} className="w-full bg-gray-100 p-2 rounded-lg font-mono text-[10px] h-16 outline-none" placeholder="0, 1000, 10000..."/>
-                                        </div>
-                                        <div>
-                                            <label className="text-[9px] font-black text-gray-400 uppercase ml-1">Daily Rewards (10 Values)</label>
-                                            <textarea value={vipDailyStr} onChange={e => setVipDailyStr(e.target.value)} className="w-full bg-gray-100 p-2 rounded-lg font-mono text-[10px] h-16 outline-none" placeholder="10, 20, 50..."/>
-                                        </div>
-                                        <div>
-                                            <label className="text-[9px] font-black text-gray-400 uppercase ml-1">Level-Up Rewards (10 Values)</label>
-                                            <textarea value={vipLevelUpStr} onChange={e => setVipLevelUpStr(e.target.value)} className="w-full bg-gray-100 p-2 rounded-lg font-mono text-[10px] h-16 outline-none" placeholder="100, 200, 500..."/>
-                                        </div>
-                                    </div>
-                                </div>
+                            <div className="flex justify-between items-center mb-4"><h3 className="font-black uppercase text-xs text-indigo-600">1. Economy & Commission</h3><Save size={16} className="text-gray-400 cursor-pointer" onClick={() => handleSaveSettings(settings)} /></div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div><label className="text-[10px] text-gray-400 font-bold">Ref Bonus</label><input type="number" value={settings.referralBonus} onChange={e => setSettings({...settings, referralBonus: Number(e.target.value)})} className="w-full bg-gray-50 p-2 rounded-lg border font-bold text-sm"/></div>
+                                <div><label className="text-[10px] text-gray-400 font-bold">Ref Comm %</label><input type="number" value={settings.referralCommission} onChange={e => setSettings({...settings, referralCommission: Number(e.target.value)})} className="w-full bg-gray-50 p-2 rounded-lg border font-bold text-sm"/></div>
+                                <div><label className="text-[10px] text-gray-400 font-bold">Dep Bonus %</label><input type="number" value={settings.depositBonusPercent} onChange={e => setSettings({...settings, depositBonusPercent: Number(e.target.value)})} className="w-full bg-gray-50 p-2 rounded-lg border font-bold text-sm"/></div>
                             </div>
+                            <button onClick={() => handleSaveSettings(settings)} className="mt-3 w-full bg-indigo-600 text-white py-2 rounded-lg text-xs font-bold">Save Economy</button>
                         </div>
 
-                        {/* External Support Links */}
-                        <div className="bg-white p-6 rounded-[2rem] shadow-xl border-2 border-blue-50">
-                            <h3 className="font-black text-black uppercase tracking-wider mb-6 flex items-center gap-2 text-blue-600"><Globe size={18}/> External Service Links</h3>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="text-[11px] font-black text-gray-500 uppercase ml-1">Customer Service URL</label>
-                                    <input type="text" value={settings.customerServiceUrl} onChange={e => setSettings({...settings, customerServiceUrl: e.target.value})} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none mt-1" placeholder="https://t.me/your_support" />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-black text-gray-500 uppercase ml-1">Forgot Password URL (Support Link)</label>
-                                    <input type="text" value={settings.forgotPasswordUrl} onChange={e => setSettings({...settings, forgotPasswordUrl: e.target.value})} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none mt-1" />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-black text-gray-500 uppercase ml-1">Privacy Policy URL</label>
-                                    <input type="text" value={settings.privacyPolicyUrl} onChange={e => setSettings({...settings, privacyPolicyUrl: e.target.value})} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none mt-1" />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Payment Gateways */}
+                        {/* Limit Management */}
                         <div className="bg-white p-6 rounded-[2rem] shadow-xl">
-                            <h3 className="font-black text-black uppercase tracking-wider mb-6 flex items-center gap-2"><CreditCard size={18}/> Payment Gateways</h3>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="text-[11px] font-black text-gray-500 uppercase ml-1">Admin UPI ID</label>
-                                    <input type="text" value={settings.adminUpiId} onChange={e => setSettings({...settings, adminUpiId: e.target.value})} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none mt-1" />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-black text-gray-500 uppercase ml-1">UPI QR Image URL</label>
-                                    <input type="text" value={settings.adminQrCodeUrl} onChange={e => setSettings({...settings, adminQrCodeUrl: e.target.value})} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none mt-1" />
-                                </div>
-                                <div className="pt-2 border-t border-gray-100">
-                                    <label className="text-[11px] font-black text-gray-500 uppercase ml-1">USDT (TRC20) Address</label>
-                                    <input type="text" value={settings.adminUsdtAddress} onChange={e => setSettings({...settings, adminUsdtAddress: e.target.value})} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none mt-1" />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-black text-gray-500 uppercase ml-1">USDT QR Image URL</label>
-                                    <input type="text" value={settings.adminUsdtQrCodeUrl} onChange={e => setSettings({...settings, adminUsdtQrCodeUrl: e.target.value})} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none mt-1" />
-                                </div>
+                            <div className="flex justify-between items-center mb-4"><h3 className="font-black uppercase text-xs text-red-600">2. Limit Management</h3></div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div><label className="text-[10px] text-gray-400 font-bold">Min Deposit</label><input type="number" value={settings.minDeposit} onChange={e => setSettings({...settings, minDeposit: Number(e.target.value)})} className="w-full bg-gray-50 p-2 rounded-lg border font-bold text-sm"/></div>
+                                <div><label className="text-[10px] text-gray-400 font-bold">Max Deposit</label><input type="number" value={settings.maxDeposit} onChange={e => setSettings({...settings, maxDeposit: Number(e.target.value)})} className="w-full bg-gray-50 p-2 rounded-lg border font-bold text-sm"/></div>
+                                <div><label className="text-[10px] text-gray-400 font-bold">Min Withdraw</label><input type="number" value={settings.minWithdraw} onChange={e => setSettings({...settings, minWithdraw: Number(e.target.value)})} className="w-full bg-gray-50 p-2 rounded-lg border font-bold text-sm"/></div>
+                                <div><label className="text-[10px] text-gray-400 font-bold">Max Withdraw</label><input type="number" value={settings.maxWithdraw} onChange={e => setSettings({...settings, maxWithdraw: Number(e.target.value)})} className="w-full bg-gray-50 p-2 rounded-lg border font-bold text-sm"/></div>
                             </div>
+                            <button onClick={() => handleSaveSettings(settings)} className="mt-3 w-full bg-red-600 text-white py-2 rounded-lg text-xs font-bold">Save Limits</button>
                         </div>
 
-                        <button onClick={saveSettings} className="w-full bg-black text-white font-black py-4 rounded-2xl shadow-xl uppercase tracking-widest text-sm">Save All Variable Data</button>
+                        {/* Payment Gateway */}
+                        <div className="bg-white p-6 rounded-[2rem] shadow-xl">
+                            <div className="flex justify-between items-center mb-4"><h3 className="font-black uppercase text-xs text-green-600">3. Payment Gateway</h3></div>
+                            <div className="space-y-2">
+                                <input placeholder="UPI ID" value={settings.adminUpiId} onChange={e => setSettings({...settings, adminUpiId: e.target.value})} className="w-full bg-gray-50 p-2 rounded-lg border text-sm" />
+                                <input placeholder="UPI QR URL" value={settings.adminQrCodeUrl} onChange={e => setSettings({...settings, adminQrCodeUrl: e.target.value})} className="w-full bg-gray-50 p-2 rounded-lg border text-sm" />
+                                <input placeholder="USDT Addr" value={settings.adminUsdtAddress} onChange={e => setSettings({...settings, adminUsdtAddress: e.target.value})} className="w-full bg-gray-50 p-2 rounded-lg border text-sm" />
+                                <input placeholder="USDT QR URL" value={settings.adminUsdtQrCodeUrl} onChange={e => setSettings({...settings, adminUsdtQrCodeUrl: e.target.value})} className="w-full bg-gray-50 p-2 rounded-lg border text-sm" />
+                            </div>
+                            <button onClick={() => handleSaveSettings(settings)} className="mt-3 w-full bg-green-600 text-white py-2 rounded-lg text-xs font-bold">Save Payment</button>
+                        </div>
+
+                        {/* Support Links */}
+                        <div className="bg-white p-6 rounded-[2rem] shadow-xl">
+                            <div className="flex justify-between items-center mb-4"><h3 className="font-black uppercase text-xs text-blue-600">4. Support Links</h3></div>
+                            <div className="space-y-2">
+                                <input placeholder="Customer Care URL" value={settings.customerServiceUrl} onChange={e => setSettings({...settings, customerServiceUrl: e.target.value})} className="w-full bg-gray-50 p-2 rounded-lg border text-sm" />
+                                <input placeholder="Forgot Password URL" value={settings.forgotPasswordUrl} onChange={e => setSettings({...settings, forgotPasswordUrl: e.target.value})} className="w-full bg-gray-50 p-2 rounded-lg border text-sm" />
+                                <input placeholder="Privacy Policy URL" value={settings.privacyPolicyUrl} onChange={e => setSettings({...settings, privacyPolicyUrl: e.target.value})} className="w-full bg-gray-50 p-2 rounded-lg border text-sm" />
+                            </div>
+                            <button onClick={() => handleSaveSettings(settings)} className="mt-3 w-full bg-blue-600 text-white py-2 rounded-lg text-xs font-bold">Save Links</button>
+                        </div>
+
+                        {/* VIP Tiers */}
+                        <div className="bg-white p-6 rounded-[2rem] shadow-xl">
+                            <div className="flex justify-between items-center mb-4"><h3 className="font-black uppercase text-xs text-yellow-600">5. VIP Tiers Management</h3></div>
+                            <label className="text-[10px] text-gray-400 font-bold block mb-1">Thresholds (Comma separated)</label>
+                            <textarea 
+                                value={vipTiersStr} 
+                                onChange={e => setVipTiersStr(e.target.value)} 
+                                className="w-full bg-gray-50 p-3 rounded-lg border text-xs font-mono h-20 mb-2"
+                                placeholder="0, 1000, 5000, 10000..." 
+                            />
+                            <button onClick={() => {
+                                const arr = vipTiersStr.split(',').map(s => parseInt(s.trim()) || 0);
+                                handleSaveSettings({ vipThresholds: arr });
+                            }} className="w-full bg-yellow-600 text-white py-2 rounded-lg text-xs font-bold">Save Tiers</button>
+                        </div>
                     </div>
                 )}
 
-                {/* SYSTEM TAB: WELCOME & ANNOUNCEMENTS */}
+                {/* 3. SYSTEM TAB */}
                 {activeTab === 'system' && (
                     <div className="space-y-6">
+                        {/* Task Creator */}
                         <div className="bg-white p-6 rounded-[2rem] shadow-xl">
-                            <h3 className="font-black text-black uppercase tracking-wider mb-4 flex items-center gap-2"><PartyPopper size={18}/> Welcome Messaging</h3>
-                            <textarea value={settings.welcomeMessage} onChange={e => setSettings({...settings, welcomeMessage: e.target.value})} className="w-full bg-gray-100 p-4 rounded-2xl font-bold text-sm h-32 outline-none border-2 border-transparent focus:border-orange-400 transition" />
-                            <p className="text-[9px] text-gray-400 mt-2 font-black">TAGS: #username, #userid, #balance, #refercode</p>
+                            <h3 className="font-black uppercase text-xs mb-4 text-[#f52c2c] flex gap-2"><ClipboardList size={14}/> 1. Task Creator</h3>
+                            <input placeholder="Title" value={actTitle} onChange={e => setActTitle(e.target.value)} className="w-full bg-gray-50 p-2 rounded-lg border text-sm mb-2" />
+                            <textarea placeholder="Description" value={actDesc} onChange={e => setActDesc(e.target.value)} className="w-full bg-gray-50 p-2 rounded-lg border text-sm mb-2 h-16" />
+                            <input placeholder="Amount" type="number" value={actAmt} onChange={e => setActAmt(e.target.value===''?'':Number(e.target.value))} className="w-full bg-gray-50 p-2 rounded-lg border text-sm mb-2" />
+                            <button onClick={handleAddActivity} className="w-full bg-[#f52c2c] text-white py-2 rounded-lg font-bold text-xs uppercase">Create Task</button>
                         </div>
 
+                        {/* Messages */}
                         <div className="bg-white p-6 rounded-[2rem] shadow-xl">
-                            <h3 className="font-black text-black uppercase tracking-wider mb-6 flex items-center gap-2 text-red-600"><Bell size={18}/> Announcement Broadcast</h3>
-                            <div className="space-y-4">
-                                <input type="text" placeholder="Title" value={notifTitle} onChange={e => setNotifTitle(e.target.value)} className="w-full bg-gray-100 p-3 rounded-xl font-black text-sm outline-none" />
-                                <textarea placeholder="Content..." value={notifContent} onChange={e => setNotifContent(e.target.value)} className="w-full bg-gray-100 p-3 rounded-xl font-bold text-xs h-24 outline-none" />
-                                <button onClick={handlePublishNotification} className="w-full bg-red-600 text-white font-black py-4 rounded-2xl shadow-lg uppercase tracking-widest text-xs">Send Broadcast</button>
+                            <h3 className="font-black uppercase text-xs mb-4 text-purple-600">2 & 3. System Messages</h3>
+                            {COMMANDS_LEGEND}
+                            <div className="space-y-3">
+                                <div><label className="text-[10px] text-gray-400 font-bold">Welcome Message</label><textarea value={settings.welcomeMessage} onChange={e => setSettings({...settings, welcomeMessage: e.target.value})} className="w-full bg-gray-50 p-2 rounded-lg border text-xs h-16"/></div>
+                                <div><label className="text-[10px] text-gray-400 font-bold">Login Popup Title</label><input value={settings.loginPopupTitle} onChange={e => setSettings({...settings, loginPopupTitle: e.target.value})} className="w-full bg-gray-50 p-2 rounded-lg border text-xs"/></div>
+                                <div><label className="text-[10px] text-gray-400 font-bold">Login Popup Message</label><textarea value={settings.loginPopupMessage} onChange={e => setSettings({...settings, loginPopupMessage: e.target.value})} className="w-full bg-gray-50 p-2 rounded-lg border text-xs h-16"/></div>
                             </div>
+                            <button onClick={() => handleSaveSettings(settings)} className="mt-3 w-full bg-purple-600 text-white py-2 rounded-lg text-xs font-bold">Save Messages</button>
+                        </div>
 
-                            <div className="mt-8 space-y-3">
-                                <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest border-b pb-1">Previous Announcements</p>
-                                {notifications.map(n => (
-                                    <div key={n.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
-                                        <div className="min-w-0 pr-3">
-                                            <p className="text-xs font-black truncate">{n.title}</p>
-                                            <p className="text-[9px] text-gray-500 truncate">{n.content}</p>
-                                        </div>
-                                        <button onClick={() => handleDeleteNotif(n.id)} className="text-red-500 p-1"><Trash2 size={16}/></button>
+                        {/* Banner */}
+                        <div className="bg-white p-6 rounded-[2rem] shadow-xl">
+                            <h3 className="font-black uppercase text-xs mb-4 text-blue-500">4. Banner Create</h3>
+                            <input placeholder="Image URL" value={newBannerUrl} onChange={e => setNewBannerUrl(e.target.value)} className="w-full bg-gray-50 p-2 rounded-lg border text-sm mb-2" />
+                            <input placeholder="Link (Optional)" value={newBannerLink} onChange={e => setNewBannerLink(e.target.value)} className="w-full bg-gray-50 p-2 rounded-lg border text-sm mb-2" />
+                            <button onClick={handleAddBanner} className="w-full bg-blue-500 text-white py-2 rounded-lg font-bold text-xs uppercase">Add Banner</button>
+                            <div className="mt-4 border-t pt-2">
+                                {settings.homeBanners?.map((b, i) => (
+                                    <div key={i} className="flex justify-between items-center text-xs p-1">
+                                        <span className="truncate w-3/4">{b.imageUrl}</span>
+                                        <button onClick={() => {
+                                            const nb = settings.homeBanners.filter((_, idx) => idx !== i);
+                                            handleSaveSettings({ homeBanners: nb }, "Banner Removed");
+                                        }} className="text-red-500 font-bold">X</button>
                                     </div>
                                 ))}
                             </div>
                         </div>
+
+                        {/* Broadcast */}
+                        <div className="bg-white p-6 rounded-[2rem] shadow-xl">
+                            <h3 className="font-black uppercase text-xs mb-4 text-orange-600 flex gap-2"><Send size={14}/> 5. Global Broadcast</h3>
+                            {COMMANDS_LEGEND}
+                            <input placeholder="Title" value={broadcastTitle} onChange={e => setBroadcastTitle(e.target.value)} className="w-full bg-gray-50 p-2 rounded-lg border text-sm mb-2" />
+                            <textarea placeholder="Message... (Use placeholders)" value={broadcastMsg} onChange={e => setBroadcastMsg(e.target.value)} className="w-full bg-gray-50 p-2 rounded-lg border text-sm mb-2 h-16" />
+                            <button onClick={() => {
+                                if(broadcastTitle && broadcastMsg) {
+                                    publishNotification(broadcastTitle, broadcastMsg);
+                                    showSuccess("Broadcast Sent");
+                                    setBroadcastTitle(''); setBroadcastMsg('');
+                                }
+                            }} className="w-full bg-orange-600 text-white py-2 rounded-lg font-bold text-xs uppercase">Push Broadcast</button>
+                        </div>
                     </div>
                 )}
 
-                {/* LEADERBOARD TAB: TOP 10 MANAGEMENT */}
-                {activeTab === 'leaderboard' && (
+                {/* 4. RANKING TAB */}
+                {activeTab === 'ranking' && (
                     <div className="space-y-4">
-                        <div className="flex justify-between items-center px-2">
-                            <h2 className="text-black font-black text-lg border-l-4 border-yellow-500 pl-3">Official Rankings</h2>
-                            <span className="text-[10px] font-black text-gray-400">10 Slots</span>
-                        </div>
-                        {lbEntries.map((entry, i) => (
-                            <div key={i} className="bg-white p-5 rounded-[2rem] shadow-md border border-gray-100 space-y-4">
-                                <div className="flex justify-between items-center">
-                                    <div className="flex items-center gap-2">
-                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-xs ${i < 3 ? 'bg-yellow-400 text-white shadow-md' : 'bg-gray-200 text-gray-500'}`}>{i + 1}</div>
-                                        <span className="text-xs font-black text-black">Rank Position {i + 1}</span>
-                                    </div>
-                                    <select value={entry.gender} onChange={e => updateLbEntry(i, 'gender', e.target.value)} className="text-[10px] font-black bg-gray-100 p-1 px-3 rounded-full outline-none">
-                                        <option value="male">Male</option>
-                                        <option value="female">Female</option>
+                        <h2 className="font-black uppercase border-l-4 border-yellow-500 pl-3 text-black text-xs">Top 10 Player Manual Control</h2>
+                        {Array.from({length: 10}).map((_, i) => {
+                            const entry = settings.leaderboard?.[i] || {name:'', userId:'', amount:0, gender:'male'};
+                            return (
+                                <div key={i} className="bg-white p-4 rounded-3xl shadow-md border border-gray-100 flex gap-2 items-center">
+                                    <span className="font-black text-yellow-600 text-xs w-6">#{i+1}</span>
+                                    <input placeholder="Name" value={entry.name} onChange={e => handleRankingUpdate(i, 'name', e.target.value)} className="bg-gray-50 p-2 rounded-lg border text-[10px] w-1/4" />
+                                    <input placeholder="ID" value={entry.userId} onChange={e => handleRankingUpdate(i, 'userId', e.target.value)} className="bg-gray-50 p-2 rounded-lg border text-[10px] w-1/4" />
+                                    <input placeholder="₹" type="number" value={entry.amount} onChange={e => handleRankingUpdate(i, 'amount', Number(e.target.value))} className="bg-gray-50 p-2 rounded-lg border text-[10px] w-1/4" />
+                                    <select value={entry.gender} onChange={e => handleRankingUpdate(i, 'gender', e.target.value)} className="bg-gray-50 p-2 rounded-lg border text-[10px] w-16">
+                                        <option value="male">M</option>
+                                        <option value="female">F</option>
                                     </select>
                                 </div>
-                                <div className="grid grid-cols-3 gap-2">
-                                    <input placeholder="Name" value={entry.name} onChange={e => updateLbEntry(i, 'name', e.target.value)} className="bg-gray-50 p-2 rounded-lg text-xs font-bold outline-none" />
-                                    <input placeholder="Public ID" value={entry.userId} onChange={e => updateLbEntry(i, 'userId', e.target.value)} className="bg-gray-50 p-2 rounded-lg text-xs font-bold outline-none" />
-                                    <input type="number" placeholder="Income" value={entry.amount || ''} onChange={e => updateLbEntry(i, 'amount', Number(e.target.value))} className="bg-gray-50 p-2 rounded-lg text-xs font-bold outline-none" />
+                            );
+                        })}
+                        <button onClick={() => handleSaveSettings(settings, "Rankings Synced")} className="w-full bg-yellow-500 text-black font-black py-5 rounded-3xl shadow-xl uppercase active:scale-95 transition">Save Rankings</button>
+                    </div>
+                )}
+
+                {/* FINANCE TAB */}
+                {activeTab === 'finance' && (
+                    <div className="space-y-4">
+                        <h2 className="font-black uppercase border-l-4 border-red-600 pl-3 text-black text-xs">Pending Transactions</h2>
+                        {transactions.filter(t => t.status === 'pending').length === 0 && <p className="text-gray-400 text-xs text-center py-4">No pending requests</p>}
+                        {transactions.filter(t => t.status === 'pending').map(tx => (
+                            <div key={tx.id} className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-xl flex justify-between items-center animate-fade-in">
+                                <div>
+                                    <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${tx.type === 'deposit' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{tx.type}</span>
+                                    <p className="font-black text-sm mt-1 text-black">ID: <span className="text-red-600">{tx.userNumericId}</span></p>
+                                    <p className="text-[10px] text-gray-400 mt-1">{tx.details}</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="font-black text-xl text-black">₹{tx.amount}</p>
+                                    <div className="flex gap-2 mt-2">
+                                        <button onClick={() => handleAction(tx, 'approved')} className="bg-green-600 text-white p-2 rounded-xl shadow-lg active:scale-90 transition"><CheckCircle size={20}/></button>
+                                        <button onClick={() => handleAction(tx, 'rejected')} className="bg-red-600 text-white p-2 rounded-xl shadow-lg active:scale-90 transition"><Trash2 size={20}/></button>
+                                    </div>
                                 </div>
                             </div>
                         ))}
-                        <button onClick={saveSettings} className="w-full bg-yellow-500 text-black font-black py-5 rounded-2xl shadow-xl uppercase tracking-widest text-sm">Update Official Rankings</button>
                     </div>
                 )}
 
-                {/* WINGO TAB: PREDICTION CONTROL */}
+                {/* WINGO TAB */}
                 {activeTab === 'wingo' && (
-                    <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-gray-100">
-                        <h2 className="text-black font-black mb-6 text-xl flex items-center gap-3"><LayoutDashboard size={24} className="text-indigo-600"/> Wingo Controller</h2>
-                        <div className="bg-indigo-50 p-6 rounded-2xl border-2 border-indigo-100 mb-6 shadow-inner text-center">
-                            <p className="text-[11px] text-indigo-700 font-black uppercase mb-2">Operational Mode</p>
-                            {currentWingoForced !== null ? (
-                                <div className="bg-red-600 text-white p-2 px-4 rounded-full inline-block font-black text-sm shadow-md animate-pulse">FORCED: {currentWingoForced}</div>
-                            ) : (
-                                <div className="bg-green-600 text-white p-2 px-4 rounded-full inline-block font-black text-sm shadow-md">SMART AUTO MODE</div>
-                            )}
-                            <p className="text-[10px] text-indigo-400 font-bold mt-4 italic leading-tight">In auto mode, the system selects the number with the lowest total payout from active bets to maximize profit.</p>
+                    <div className="bg-white p-8 rounded-[3rem] border shadow-2xl text-center space-y-6">
+                        <h2 className="font-black uppercase flex items-center justify-center gap-2 text-indigo-700"><LayoutDashboard size={24}/> Force Results</h2>
+                        <div className={`p-6 rounded-[2rem] font-black text-white shadow-lg transition-all ${wingoForced !== null ? 'bg-red-600 animate-pulse' : 'bg-green-600'}`}>
+                            {wingoForced !== null ? `CURRENTLY FORCING: ${wingoForced}` : 'STATUS: AI AUTO MODE'}
                         </div>
-                        <div className="flex gap-4">
-                            <div className="flex flex-col items-center">
-                                <label className="text-[10px] font-black text-gray-400 mb-1">Target # (0-9)</label>
-                                <input type="number" max={9} min={0} value={wingoResultInput} onChange={e => setWingoResultInput(e.target.value === '' ? '' : Number(e.target.value))} className="w-20 border-4 border-gray-100 rounded-2xl text-center font-black text-4xl p-3 outline-none focus:border-indigo-400 transition" />
-                            </div>
-                            <div className="flex-1 flex flex-col gap-2 pt-5">
-                                <button onClick={() => handleWingoControl(false)} className="bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-lg active:scale-95 transition uppercase text-xs">Force Result</button>
-                                <button onClick={() => handleWingoControl(true)} className="bg-gray-100 text-gray-500 font-black py-3 rounded-2xl uppercase text-[10px]">Reset to Auto</button>
+                        <div className="flex gap-3">
+                            <input type="number" max={9} min={0} value={wingoInput} onChange={e => setWingoInput(e.target.value===''?'':Number(e.target.value))} className="w-24 bg-gray-50 border-4 border-gray-100 p-5 rounded-3xl text-center font-black text-4xl shadow-inner outline-none" placeholder="?" />
+                            <div className="flex-1 flex flex-col gap-3">
+                                <button onClick={async () => { if(wingoInput==='') return; await setWingoNextResult(Number(wingoInput)); setWingoForced(Number(wingoInput)); showSuccess("Locked result: " + wingoInput); }} className="bg-black text-white font-black py-4 rounded-2xl uppercase shadow-xl active:scale-95 transition">Lock Next</button>
+                                <button onClick={async () => { await setWingoNextResult(null); setWingoForced(null); setWingoInput(''); showSuccess("Returned to Auto"); }} className="bg-gray-200 text-gray-500 font-black py-3 rounded-2xl uppercase active:scale-95 transition">Auto Mode</button>
                             </div>
                         </div>
                     </div>
                 )}
             </div>
 
-            {/* Success Notification */}
             {successMessage && (
-                <div className="fixed bottom-24 left-1/2 transform -translate-x-1/2 bg-black text-white px-8 py-4 rounded-full shadow-2xl z-[1000] flex items-center gap-3 animate-slide-up border border-white/20">
-                    <CheckCircle size={20} className="text-green-500" />
+                <div className="fixed bottom-24 left-1/2 -translate-x-1/2 bg-black text-white px-10 py-4 rounded-full shadow-2xl z-[1000] flex items-center gap-4 border border-white/20">
+                    <div className="bg-green-500 rounded-full p-1"><CheckCircle size={20} className="text-black" /></div>
                     <span className="font-black text-xs uppercase tracking-widest">{successMessage}</span>
                 </div>
             )}
         </div>
     );
 };
+                    
