@@ -3,6 +3,7 @@ import React from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Login } from './pages/Auth/Login';
 import { Register } from './pages/Auth/Register';
+import { ForgotPassword } from './pages/Auth/ForgotPassword';
 import { Home } from './pages/Home';
 import { Wallet } from './pages/Wallet';
 import { Aviator } from './pages/Games/Aviator';
@@ -43,6 +44,7 @@ const OrientationGuard = () => {
         '/', 
         '/login', 
         '/register', 
+        '/forgot-password',
         '/game/aviator', 
         '/game/dragontiger',
         '/game/mines',
@@ -83,6 +85,7 @@ const App = () => {
         <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
             
             <Route path="/" element={
                 <ProtectedRoute><Home /></ProtectedRoute>
