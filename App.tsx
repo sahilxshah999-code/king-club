@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Login } from './pages/Auth/Login';
@@ -10,8 +11,15 @@ import { Spin } from './pages/Games/Spin';
 import { Roulette } from './pages/Games/Roulette';
 import { DragonTiger } from './pages/Games/DragonTiger';
 import { Mines } from './pages/Games/Mines';
+import { ChickenRoad } from './pages/Games/ChickenRoad';
+import { Plinko } from './pages/Games/Plinko';
+import { DragonTower } from './pages/Games/DragonTower';
+import { CoinFlip } from './pages/Games/CoinFlip';
+import { Keno } from './pages/Games/Keno';
+import { Dice } from './pages/Games/Dice';
 import { Admin } from './pages/Admin';
 import { Vip } from './pages/Vip';
+import { Activity } from './pages/Activity';
 import { Notifications } from './pages/Notifications';
 import { Leaderboard } from './pages/Leaderboard';
 import { Layout } from './components/Layout';
@@ -38,11 +46,18 @@ const OrientationGuard = () => {
         '/game/aviator', 
         '/game/dragontiger',
         '/game/mines',
+        '/game/chickenroad',
+        '/game/plinko',
+        '/game/dragontower',
+        '/game/coinflip',
+        '/game/keno',
+        '/game/dice',
         '/wallet',
         '/profile',
         '/notifications',
         '/admin',
-        '/leaderboard'
+        '/leaderboard',
+        '/activity'
     ];
     
     if (allowedPaths.includes(location.pathname)) return null;
@@ -78,6 +93,9 @@ const App = () => {
             <Route path="/profile" element={
                 <ProtectedRoute><Vip /></ProtectedRoute>
             } />
+            <Route path="/activity" element={
+                <ProtectedRoute><Activity /></ProtectedRoute>
+            } />
             <Route path="/notifications" element={
                 <ProtectedRoute><Notifications /></ProtectedRoute>
             } />
@@ -99,6 +117,24 @@ const App = () => {
             } />
             <Route path="/game/mines" element={
                 <GameLayout><Mines /></GameLayout>
+            } />
+            <Route path="/game/chickenroad" element={
+                <ProtectedRoute><ChickenRoad /></ProtectedRoute>
+            } />
+            <Route path="/game/plinko" element={
+                <GameLayout><Plinko /></GameLayout>
+            } />
+            <Route path="/game/dragontower" element={
+                <GameLayout><DragonTower /></GameLayout>
+            } />
+            <Route path="/game/coinflip" element={
+                <ProtectedRoute><CoinFlip /></ProtectedRoute>
+            } />
+            <Route path="/game/keno" element={
+                <GameLayout><Keno /></GameLayout>
+            } />
+            <Route path="/game/dice" element={
+                <GameLayout><Dice /></GameLayout>
             } />
             <Route path="/spin" element={
                 <ProtectedRoute><Spin /></ProtectedRoute>
