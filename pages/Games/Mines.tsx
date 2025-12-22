@@ -1,10 +1,12 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../../firebase';
 import { getUserProfile, startMinesGame, revealMinesTile, cashOutMines } from '../../services/userService';
 import { UserProfile } from '../../types';
-import { ChevronLeft, Info, Bomb, Gem, Coins, ShieldAlert } from 'lucide-react';
+import { ChevronLeft, Info, Bomb, Gem, Coins, ShieldAlert, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { WinLossPopup } from '../../components/WinLossPopup';
+import { Toast } from '../../components/Toast';
 import { ref, onValue } from 'firebase/database';
 
 type TileStatus = 'HIDDEN' | 'GEM' | 'MINE';
@@ -20,6 +22,7 @@ export const Mines = () => {
     const navigate = useNavigate();
     const [user, setUser] = useState<UserProfile | null>(null);
     const [isActive, setIsActive] = useState(false);
+    const [onlinePlayers, setOnlinePlayers] = useState(8940);
     
     // Game State
     const [betAmount, setBetAmount] = useState(10);
@@ -31,31 +34,47 @@ export const Mines = () => {
     
     // UI State
     const [popup, setPopup] = useState<{type: 'win' | 'loss', amount: number} | null>(null);
+    const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
-        // Use onAuthStateChanged to handle page refreshes where currentUser might be null initially
+        // Fake Players
+        setOnlinePlayers(Math.floor(Math.random() * (20000 - 5000 + 1)) + 5000);
+        const playerInterval = setInterval(() => {
+            setOnlinePlayers(prev => {
+                const change = Math.floor(Math.random() * 50) - 20; 
+                let next = prev + change;
+                if (next < 5000) next = 5000;
+                if (next > 20000) next = 20000;
+                return next;
+            });
+        }, 3000);
+
         const unsubAuth = auth.onAuthStateChanged((u) => {
             if (u) {
-                // Listen to user profile for balance updates
                 const userRef = ref(db, `users/${u.uid}`);
                 const unsubUser = onValue(userRef, (snap) => {
-                    if (snap.exists()) setUser(snap.val());
+                    if (snap.exists()) {
+                        const val = snap.val();
+                        setUser(val);
+                        // Access Control
+                        if (val.balance <= 1) {
+                            setToast({ message: "Insufficient Access Balance (> ₹1 required)", type: 'error' });
+                            setTimeout(() => navigate('/'), 2000);
+                        }
+                    }
                 });
 
-                // Check for active game on mount
                 const gameRef = ref(db, `active_games/mines/${u.uid}`);
                 const unsubGame = onValue(gameRef, (snap) => {
                     const val = snap.val();
                     if(val && val.status === 'ACTIVE') {
                         setIsActive(true);
                         setBetAmount(val.betAmount);
-                        // Determine difficulty based on mine count
                         if(val.minesCount === 3) setDifficulty('EASY');
                         else if(val.minesCount === 5) setDifficulty('MEDIUM');
                         else setDifficulty('HARD');
                         
-                        // Reconstruct Grid
                         const newGrid = Array(25).fill('HIDDEN');
                         const revealed = val.revealed || [];
                         revealed.forEach((idx: number) => {
@@ -64,7 +83,6 @@ export const Mines = () => {
                         setGrid(newGrid);
                         setRevealedCount(revealed.length);
                         
-                        // Recalculate Multiplier (Simplified logic sync with backend)
                         let mult = 1.0;
                         for(let i=0; i<revealed.length; i++) {
                             const total = 25 - i;
@@ -76,7 +94,6 @@ export const Mines = () => {
                         setCurrentProfit(val.betAmount * mult);
                     } else {
                         setIsActive(false);
-                        // If we just lost or cashed out, grid resets via local state logic below
                     }
                 });
 
@@ -89,15 +106,25 @@ export const Mines = () => {
             }
         });
         
-        return () => unsubAuth();
+        return () => {
+            unsubAuth();
+            clearInterval(playerInterval);
+        };
     }, [navigate]);
+
+    const showToast = (msg: string, type: 'success' | 'error' = 'error') => {
+        setToast({ message: msg, type });
+    };
 
     const handleStart = async () => {
         if (!user || loading) return;
-        if (user.balance < betAmount) {
-            alert("Insufficient Balance");
-            return;
-        }
+        
+        const MIN_BET = 10;
+        const MAX_BET = 10000;
+
+        if (betAmount < MIN_BET) { showToast(`Minimum balance was ${MIN_BET}`); return; }
+        if (betAmount > MAX_BET) { showToast(`Maximum balance was ${MAX_BET}`); return; }
+        if (user.balance < betAmount) { showToast("Insufficient Amount"); return; }
 
         setLoading(true);
         setGrid(Array(25).fill('HIDDEN'));
@@ -109,7 +136,7 @@ export const Mines = () => {
         const res = await startMinesGame(user.uid, betAmount, minesCount);
         
         if (!res.success) {
-            alert(res.error || "Failed to start game");
+            showToast(res.error || "Failed to start game");
         }
         setLoading(false);
     };
@@ -132,11 +159,9 @@ export const Mines = () => {
                     setCurrentProfit(res.payout);
                 }
             } else if (res.type === 'mine') {
-                // Show all mines
                 const newGrid = [...grid];
-                newGrid[index] = 'MINE'; // The one user hit
+                newGrid[index] = 'MINE'; 
                 
-                // Reveal other mines from server response
                 if(res.fullGrid) {
                     res.fullGrid.forEach((val, idx) => {
                         if(val === 1) newGrid[idx] = 'MINE';
@@ -147,7 +172,7 @@ export const Mines = () => {
                 setPopup({ type: 'loss', amount: betAmount });
             }
         } else {
-            alert(res.error);
+            showToast(res.error || "Error");
         }
         setLoading(false);
     };
@@ -161,7 +186,7 @@ export const Mines = () => {
         if (res.success && res.amount) {
             setPopup({ type: 'win', amount: res.amount });
         } else {
-            alert(res.error);
+            showToast(res.error || "Error");
         }
         setLoading(false);
     };
@@ -193,22 +218,24 @@ export const Mines = () => {
 
     return (
         <div className="min-h-screen bg-[#1a202c] flex flex-col font-sans text-white pb-6">
-            {/* Header */}
             <div className="bg-[#2d3748] p-4 flex justify-between items-center shadow-lg z-10">
                  <div className="flex items-center gap-2">
                      <button onClick={() => navigate('/')} className="hover:bg-white/10 p-2 rounded-full transition"><ChevronLeft /></button>
                      <span className="font-black text-xl tracking-wider text-yellow-500">MINES</span>
                  </div>
-                 <div className="bg-black/40 px-4 py-2 rounded-full border border-white/10 flex flex-col items-end">
-                     <span className="text-[10px] text-gray-400">Balance</span>
-                     <span className="font-mono font-bold text-green-400">₹{user?.balance ? user.balance.toFixed(2) : '0.00'}</span>
+                 <div className="flex items-center gap-3">
+                     <div className="flex items-center gap-1 bg-black/40 px-2 py-1 rounded-full border border-white/10">
+                        <User size={10} className="text-green-400" />
+                        <span className="text-[10px] font-bold text-green-400">{onlinePlayers.toLocaleString()}</span>
+                     </div>
+                     <div className="bg-black/40 px-4 py-2 rounded-full border border-white/10 flex flex-col items-end">
+                         <span className="text-[10px] text-gray-400">Balance</span>
+                         <span className="font-mono font-bold text-green-400">₹{user?.balance ? user.balance.toFixed(2) : '0.00'}</span>
+                     </div>
                  </div>
             </div>
 
-            {/* Game Area */}
             <div className="flex-1 p-4 flex flex-col max-w-lg mx-auto w-full">
-                
-                {/* Stats Bar (Multiplier / Profit) */}
                 <div className="bg-[#2d3748] rounded-xl p-4 mb-4 flex justify-between items-center border border-gray-700 shadow-lg">
                     <div className="flex items-center gap-3">
                         <div className="bg-yellow-500/20 p-2 rounded-lg">
@@ -225,19 +252,16 @@ export const Mines = () => {
                     </div>
                 </div>
 
-                {/* Grid */}
                 <div className="bg-[#171923] p-3 rounded-2xl shadow-inner border border-gray-700 mb-6">
                     <div className="grid grid-cols-5 gap-2 md:gap-3">
                         {Array.from({ length: 25 }, (_, i) => renderTile(i))}
                     </div>
                 </div>
 
-                {/* Controls */}
                 <div className="bg-[#2d3748] p-4 rounded-t-3xl border-t border-gray-600 shadow-2xl flex-1 flex flex-col justify-end">
                     
                     {!isActive ? (
                         <div className="space-y-4">
-                            {/* Difficulty Selector */}
                             <div>
                                 <label className="text-xs font-bold text-gray-400 uppercase mb-2 block">Difficulty</label>
                                 <div className="flex gap-2">
@@ -253,7 +277,6 @@ export const Mines = () => {
                                 </div>
                             </div>
 
-                            {/* Bet Input */}
                             <div>
                                 <label className="text-xs font-bold text-gray-400 uppercase mb-2 block">Bet Amount</label>
                                 <div className="relative">
@@ -305,6 +328,13 @@ export const Mines = () => {
                     type={popup.type} 
                     amount={popup.amount} 
                     onClose={() => setPopup(null)} 
+                />
+            )}
+            {toast && (
+                <Toast 
+                    message={toast.message} 
+                    type={toast.type} 
+                    onClose={() => setToast(null)} 
                 />
             )}
         </div>
