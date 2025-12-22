@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../firebase';
@@ -27,6 +28,10 @@ export const Login = () => {
     e.preventDefault();
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      
+      // Reset the login banner seen flag for the new session
+      sessionStorage.removeItem('seenLoginBanner');
+
       const user = await getUserProfile(userCredential.user.uid);
       
       if (user?.role === 'admin') {
