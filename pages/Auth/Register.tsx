@@ -1,11 +1,13 @@
+
 import React, { useState, useEffect } from 'react';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../firebase';
 import { createUserProfile, getSystemSettings } from '../../services/userService';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Mail, Lock, ChevronLeft, Globe, User, Keyboard, Eye, EyeOff } from 'lucide-react';
 
 export const Register = () => {
+  const [searchParams] = useSearchParams();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -19,10 +21,16 @@ export const Register = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
+    // Check URL for referral code
+    const code = searchParams.get('code');
+    if (code) {
+        setReferCode(code.toUpperCase());
+    }
+
     getSystemSettings().then(settings => {
       setPrivacyUrl(settings.privacyPolicyUrl || '');
     });
-  }, []);
+  }, [searchParams]);
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,6 +48,7 @@ export const Register = () => {
     }
     try {
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      // Pass the referCode to the profile creation service
       await createUserProfile(userCredential.user.uid, email, name, referCode);
       navigate('/');
     } catch (err: any) {
