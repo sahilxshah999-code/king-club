@@ -1,4 +1,5 @@
-import React, { useEffect } from 'react';
+
+import React, { useEffect, useRef } from 'react';
 import { CheckCircle, XCircle, Info } from 'lucide-react';
 
 interface ToastProps {
@@ -9,12 +10,20 @@ interface ToastProps {
 }
 
 export const Toast: React.FC<ToastProps> = ({ message, type = 'success', onClose, duration = 3000 }) => {
+  const onCloseRef = useRef(onClose);
+
+  // Keep the ref updated with the latest callback
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
   useEffect(() => {
     const timer = setTimeout(() => {
-      onClose();
+      onCloseRef.current();
     }, duration);
+    // Timer depends only on duration, not on onClose identity changing
     return () => clearTimeout(timer);
-  }, [onClose, duration]);
+  }, [duration]);
 
   const getIcon = () => {
     switch (type) {
