@@ -1,3 +1,4 @@
+
 export interface BannerItem {
   imageUrl: string;
   link?: string;
@@ -8,6 +9,7 @@ export interface Notification {
   title: string;
   content: string;
   timestamp: number;
+  targetUid?: string;
 }
 
 export interface LeaderboardEntry {
@@ -17,37 +19,46 @@ export interface LeaderboardEntry {
   gender: 'male' | 'female';
 }
 
+export interface ActivityTask {
+  id: string;
+  title: string;
+  description: string;
+  amount: number;
+  timestamp: number;
+}
+
 export interface UserProfile {
   uid: string;
-  numericId?: string; // 6 digit ID
+  numericId?: string;
   email: string;
   displayName: string;
-  
-  // Balance Breakdown
-  balance: number; // Total available to play (Sum of below)
-  depositBalance?: number; // Cannot withdraw
-  winningBalance?: number; // Can withdraw
-  bonusBalance?: number;   // Cannot withdraw
-  
+  balance: number;
+  depositBalance?: number;
+  winningBalance?: number;
+  bonusBalance?: number;
   vipLevel: number;
   totalWagered: number;
   totalDeposited: number; 
-  lastDepositAmount?: number; // Added to track last deposit for placeholders
+  lastDepositAmount?: number;
   referralCode: string;
   referredBy?: string;
   referralCount?: number;
   referralEarnings?: number;
   lastDailyClaim?: string;
-  claimedLevelUpRewards?: number[]; 
+  claimedLevelUpRewards?: number[];
+  completedActivities?: string[]; 
+  lastSpinTime?: number;
+  dailySpinCount?: number;
   createdAt?: number;
-  role: 'user' | 'admin';
-  hasSeenWelcome?: boolean; // New user welcome check
+  role: 'user' | 'admin' | 'demo';
+  hasSeenWelcome?: boolean;
 }
 
 export interface Transaction {
   id: string;
   uid: string;
-  type: 'deposit' | 'withdraw' | 'referral_bonus' | 'daily_reward' | 'game_win' | 'game_bet' | 'level_up_bonus' | 'gift_code' | 'deposit_bonus';
+  userNumericId?: string;
+  type: 'deposit' | 'withdraw' | 'referral_bonus' | 'daily_reward' | 'game_win' | 'game_bet' | 'level_up_bonus' | 'gift_code' | 'deposit_bonus' | 'manual_transfer';
   amount: number;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   method: string; 
@@ -56,48 +67,43 @@ export interface Transaction {
 }
 
 export interface SystemSettings {
+  // Economy
   referralBonus: number; 
   referralDepositBonusPercent: number; 
+  referralCommission: number; // New
   depositBonusPercent: number; 
-  homeBanners: BannerItem[]; 
-  adminUpiId: string; 
-  adminQrCodeUrl: string; 
-  adminUsdtAddress: string; 
-  adminUsdtQrCodeUrl: string; 
-  spinPrizes: number[];
-  vipThresholds: number[];
-  vipDailyRewards: number[]; 
-  vipLevelUpRewards: number[]; 
-  customerServiceUrl?: string;
-  forgotPasswordUrl?: string;
-  privacyPolicyUrl?: string;
+  
+  // Limits
   minDeposit: number;
   maxDeposit: number;
   minWithdraw: number;
   maxWithdraw: number;
-  notificationText?: string; // Legacy field
-  welcomeMessage?: string; // First-time user message
-  leaderboard?: LeaderboardEntry[]; // Top 10 fake users
-}
 
-export interface PromoCode {
-  code: string;
-  amount: number;
-  maxUses: number;
-  currentUses: number;
-  expiryDate: number;
-  message: string;
-  claimedBy?: Record<string, boolean>;
-  createdAt: number;
-  requiresDeposit?: boolean;
-  requiredDepositAmount?: number;
-}
+  // Visuals & Content
+  homeBanners: BannerItem[]; 
+  notificationText?: string;
+  welcomeMessage?: string;
+  loginPopupTitle?: string;
+  loginPopupMessage?: string;
+  leaderboard?: LeaderboardEntry[];
+  activities?: ActivityTask[];
 
-export enum GameType {
-  AVIATOR = 'aviator',
-  WINGO = 'wingo',
-  ROULETTE = 'roulette',
-  DRAGON_TIGER = 'dragontiger',
-  SPIN = 'spin',
-  MINES = 'mines'
+  // Payment
+  adminUpiId: string; 
+  adminQrCodeUrl: string; 
+  adminUsdtAddress: string; 
+  adminUsdtQrCodeUrl: string; 
+
+  // Game Settings
+  spinPrizes: number[];
+  
+  // VIP
+  vipThresholds: number[];
+  vipDailyRewards: number[]; 
+  vipLevelUpRewards: number[]; 
+
+  // Links
+  customerServiceUrl?: string;
+  forgotPasswordUrl?: string;
+  privacyPolicyUrl?: string;
 }
