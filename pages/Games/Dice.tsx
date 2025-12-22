@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../../firebase';
 import { playDice } from '../../services/userService';
