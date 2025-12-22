@@ -1,10 +1,12 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../../firebase';
 import { getUserProfile, updateUserBalance, placeBet } from '../../services/userService';
 import { UserProfile } from '../../types';
-import { ChevronLeft, History as HistoryIcon, Clock, Menu, Minus, Plus } from 'lucide-react';
+import { ChevronLeft, History as HistoryIcon, Clock, Menu, Minus, Plus, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { WinLossPopup } from '../../components/WinLossPopup';
+import { Toast } from '../../components/Toast';
 import { ref, onValue } from 'firebase/database';
 
 // Assets
@@ -16,6 +18,7 @@ type GamePhase = 'WAITING' | 'FLYING' | 'CRASHED';
 
 export const Aviator = () => {
     const navigate = useNavigate();
+    const [onlinePlayers, setOnlinePlayers] = useState(12450);
     
     // Game State
     const [phase, setPhase] = useState<GamePhase>('WAITING');
@@ -43,11 +46,25 @@ export const Aviator = () => {
     const userRef = useRef<UserProfile | null>(null);
 
     const [popup, setPopup] = useState<{type: 'win' | 'loss', amount: number} | null>(null);
+    const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+    
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const requestRef = useRef<number>(0);
     const planeImageRef = useRef<HTMLImageElement>(new Image());
 
     useEffect(() => {
+        // Fake Players Logic
+        setOnlinePlayers(Math.floor(Math.random() * (20000 - 5000 + 1)) + 5000);
+        const playerInterval = setInterval(() => {
+            setOnlinePlayers(prev => {
+                const change = Math.floor(Math.random() * 50) - 20; 
+                let next = prev + change;
+                if (next < 5000) next = 5000;
+                if (next > 20000) next = 20000;
+                return next;
+            });
+        }, 3000);
+
         const u = auth.currentUser;
         if(u) {
             const userRefDb = ref(db, `users/${u.uid}`);
@@ -55,21 +72,34 @@ export const Aviator = () => {
                 if (snap.exists()) {
                     const val = snap.val() as UserProfile;
                     setUser(val);
+                    
+                    // Access Control
+                    if (val.balance <= 1) {
+                        setToast({ message: "Insufficient Access Balance (> ₹1 required)", type: 'error' });
+                        setTimeout(() => navigate('/'), 2000);
+                    }
                 }
             });
+        } else {
+            navigate('/login');
         }
         
         planeImageRef.current.src = ASSETS.plane;
         startGameCycle();
         
         return () => {
+            clearInterval(playerInterval);
             if (requestRef.current) cancelAnimationFrame(requestRef.current);
         };
-    }, []);
+    }, [navigate]);
 
     useEffect(() => {
         userRef.current = user;
     }, [user]);
+
+    const showToast = (msg: string, type: 'success' | 'error' = 'error') => {
+        setToast({ message: msg, type });
+    };
 
     const startGameCycle = () => {
         setPhase('WAITING');
@@ -90,7 +120,6 @@ export const Aviator = () => {
     };
 
     const launchPlane = () => {
-        // Transition Next Round Bets to Current
         if (gameStateRef.current.hasBetForNextRound) {
             gameStateRef.current.hasBetForCurrentRound = true;
             gameStateRef.current.wageredAmount = gameStateRef.current.queuedAmount; 
@@ -105,55 +134,41 @@ export const Aviator = () => {
         setPhase('FLYING');
         gameStateRef.current.phase = 'FLYING';
         
-        // --- RIGGED LOGIC START ---
-        
         const currentUser = userRef.current;
         const wager = gameStateRef.current.wageredAmount;
         const hasBet = gameStateRef.current.hasBetForCurrentRound;
+        const isDemo = currentUser?.role === 'demo';
         
         let targetCrash = 1.0;
 
-        if (hasBet && currentUser) {
-            // USER IS BETTING: RIG TO LOSE
-            
-            // Calculate percentage of total funds (Balance + Wager amount)
+        if (isDemo) {
+            const baitRandom = Math.random();
+            if (baitRandom < 0.3) targetCrash = 10.0 + (Math.random() * 90.0);
+            else if (baitRandom < 0.7) targetCrash = 5.0 + (Math.random() * 5.0);
+            else targetCrash = 2.5 + (Math.random() * 2.5);
+        } else if (hasBet && currentUser) {
             const totalFunds = currentUser.balance + wager;
             const percentage = totalFunds > 0 ? (wager / totalFunds) * 100 : 0;
 
             if (percentage >= 50) {
-                 // 50% to 100% of funds -> Max 1.1x
-                 // Random between 1.00 and 1.10
                  targetCrash = 1.0 + (Math.random() * 0.1);
             } else if (percentage >= 25) {
-                 // 25% to 49% of funds -> Max 1.7x
-                 // Random between 1.00 and 1.70
                  targetCrash = 1.0 + (Math.random() * 0.7);
             } else {
-                 // 1% to 24% of funds -> Max 2.0x
-                 // Random between 1.00 and 2.00
                  targetCrash = 1.0 + (Math.random() * 1.0);
             }
-            
         } else {
-            // USER NOT BETTING: ATTRACT MODE
-            // Plane goes high (up to 100x) to make it look like winning is easy.
-            
             const baitRandom = Math.random();
             if (baitRandom < 0.2) {
-                // 20% chance: Super High (20x - 100x)
                 targetCrash = 20.0 + (Math.random() * 80.0);
             } else if (baitRandom < 0.5) {
-                // 30% chance: High (5x - 20x)
                 targetCrash = 5.0 + (Math.random() * 15.0);
             } else {
-                // 50% chance: Moderate (2x - 5x)
                 targetCrash = 2.0 + (Math.random() * 3.0);
             }
         }
         
-        if (targetCrash < 1.0) targetCrash = 1.0; // Safety floor
-        
-        // --- RIGGED LOGIC END ---
+        if (targetCrash < 1.0) targetCrash = 1.0;
 
         let startTime = Date.now();
         
@@ -198,7 +213,6 @@ export const Aviator = () => {
     const handleBetAction = async () => {
         if (!user) return;
         
-        // --- CASH OUT LOGIC ---
         if (phase === 'FLYING' && uiHasBetForCurrentRound) {
             const winMult = gameStateRef.current.multiplier;
             const wager = gameStateRef.current.wageredAmount;
@@ -212,12 +226,7 @@ export const Aviator = () => {
             return;
         }
 
-        // --- PLACE BET LOGIC ---
-        // Cancel logic if waiting
         if (uiHasBetForNextRound) {
-            // Refund logic if strictly needed, but usually just visual cancel before lock
-            // Here we just allow cancel if game hasn't taken money yet effectively
-            // But since we deduct on click, we refund:
             await updateUserBalance(user.uid, user.balance + gameStateRef.current.queuedAmount);
             gameStateRef.current.hasBetForNextRound = false;
             gameStateRef.current.queuedAmount = 0;
@@ -225,26 +234,33 @@ export const Aviator = () => {
             return;
         }
 
-        // Validation
-        if (betAmount < 10) {
-            alert("Minimum bet is ₹10");
+        // Updated Limits 1 - 20000
+        const MIN_BET = 1;
+        const MAX_BET = 20000;
+
+        if (betAmount < MIN_BET) {
+            showToast(`Minimum balance was ${MIN_BET}`);
+            return;
+        }
+        if (betAmount > MAX_BET) {
+            showToast(`Maximum balance was ${MAX_BET}`);
             return;
         }
         if (user.balance < betAmount) {
-            alert("Insufficient Balance");
+            showToast("Insufficient Amount");
             return;
         }
 
-        // Deduct & Lock
         const res = await placeBet(user.uid, betAmount);
         if (!res.success) {
-            alert("Transaction failed");
+            showToast("Transaction failed");
             return;
         }
         
         gameStateRef.current.hasBetForNextRound = true;
         gameStateRef.current.queuedAmount = betAmount;
         setUiHasBetForNextRound(true);
+        showToast("Bet Placed for next round", 'success');
     };
 
     const draw = (currentMult: number, isCrashed: boolean) => {
@@ -256,23 +272,18 @@ export const Aviator = () => {
         canvas.width = canvas.parentElement?.clientWidth || 300;
         canvas.height = 300;
 
-        // Background (Black/Dark)
         ctx.fillStyle = '#000000';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        // Grid
         ctx.strokeStyle = '#333';
         ctx.lineWidth = 0.5;
-        // ... (Grid drawing logic simplified for brevity) ...
 
         if (phase === 'WAITING') {
-            // Waiting Text
             ctx.fillStyle = '#ffffff';
             ctx.font = 'bold 20px Arial';
             ctx.textAlign = 'center';
             ctx.fillText("WAITING FOR NEXT ROUND", canvas.width/2, canvas.height/2 - 20);
             
-            // Progress Bar
             const barW = 200;
             const barH = 4;
             ctx.fillStyle = '#333';
@@ -282,30 +293,26 @@ export const Aviator = () => {
             return;
         }
 
-        // Curve Calculation
         const maxMult = Math.max(2, currentMult * 1.2);
         const normY = (currentMult - 1) / (maxMult - 1);
         
         const startX = 0;
         const startY = canvas.height;
-        const endX = canvas.width * 0.8; // Plane sits at 80% width
-        const endY = canvas.height - (canvas.height * 0.8 * normY); // Scale height
+        const endX = canvas.width * 0.8; 
+        const endY = canvas.height - (canvas.height * 0.8 * normY); 
 
-        // Draw Area Under Curve
         ctx.beginPath();
         ctx.moveTo(startX, startY);
         ctx.quadraticCurveTo(canvas.width * 0.4, endY, endX, endY);
         ctx.lineTo(endX, canvas.height);
         ctx.lineTo(startX, canvas.height);
         
-        // Gradient Fill
         const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-        grad.addColorStop(0, 'rgba(185, 28, 28, 0.6)'); // Dark Red
+        grad.addColorStop(0, 'rgba(185, 28, 28, 0.6)'); 
         grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
         ctx.fillStyle = grad;
         ctx.fill();
 
-        // Draw Line
         ctx.beginPath();
         ctx.moveTo(startX, startY);
         ctx.quadraticCurveTo(canvas.width * 0.4, endY, endX, endY);
@@ -313,7 +320,6 @@ export const Aviator = () => {
         ctx.lineWidth = 4;
         ctx.stroke();
 
-        // Draw Plane
         if (!isCrashed) {
             ctx.save();
             ctx.translate(endX, endY);
@@ -329,7 +335,6 @@ export const Aviator = () => {
 
     return (
         <div className="min-h-screen bg-[#101011] flex flex-col font-sans">
-            {/* Top Bar */}
             <div className="flex justify-between items-center px-4 py-2 bg-[#1b1c1d] border-b border-white/5">
                 <div className="flex items-center gap-2">
                     <button onClick={() => navigate('/')} className="text-gray-400 hover:text-white transition">
@@ -337,7 +342,11 @@ export const Aviator = () => {
                     </button>
                     <h1 className="text-[#ef4444] text-2xl font-bold italic tracking-wider">Aviator</h1>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 bg-black/40 px-2 py-1 rounded-full border border-white/10">
+                        <User size={12} className="text-green-500" />
+                        <span className="text-[10px] font-black text-green-500">{onlinePlayers.toLocaleString()}</span>
+                    </div>
                     <div className="text-green-500 font-bold text-sm">
                         {(user?.balance || 0).toFixed(2)} ₹
                     </div>
@@ -345,7 +354,6 @@ export const Aviator = () => {
                 </div>
             </div>
 
-            {/* History Bar */}
             <div className="bg-[#101011] p-2 flex gap-2 overflow-x-auto no-scrollbar items-center border-b border-white/5">
                 {gameHistory.map((h, i) => (
                     <div key={i} className={`px-2 py-0.5 rounded text-xs font-bold ${h >= 10 ? 'text-[#c017b4]' : h >= 2 ? 'text-[#913ef8]' : 'text-[#34b4ff]'} bg-gray-800/50 min-w-[3rem] text-center`}>
@@ -357,11 +365,8 @@ export const Aviator = () => {
                 </div>
             </div>
 
-            {/* Canvas Area */}
             <div className="relative flex-1 bg-black flex flex-col justify-center">
                 <canvas ref={canvasRef} className="w-full h-full absolute inset-0" />
-                
-                {/* Central Multiplier Display */}
                 {phase !== 'WAITING' && (
                     <div className="absolute top-10 left-0 right-0 text-center pointer-events-none z-10">
                         <div className={`text-6xl font-black tracking-tighter ${phase === 'CRASHED' ? 'text-[#ef4444]' : 'text-white'}`}>
@@ -371,16 +376,11 @@ export const Aviator = () => {
                 )}
             </div>
 
-            {/* Betting Controls - Styling matched to image */}
             <div className="p-2 bg-[#101011]">
-                {/* Main Panel */}
                 <div className="bg-[#1b1c1d] rounded-2xl p-3 border border-gray-800">
-                    
-                    {/* Bet Controls Row */}
                     <div className="flex gap-2 h-14 mb-2">
-                        {/* Minus/Plus Input */}
                         <div className="flex-1 bg-[#101011] rounded-full border border-gray-700 flex items-center px-1">
-                            <button onClick={() => setBetAmount(Math.max(10, betAmount - 10))} className="w-10 h-full flex items-center justify-center text-gray-400 hover:text-white transition">
+                            <button onClick={() => setBetAmount(Math.max(1, betAmount - 10))} className="w-10 h-full flex items-center justify-center text-gray-400 hover:text-white transition">
                                 <Minus size={16} />
                             </button>
                             <input 
@@ -395,7 +395,6 @@ export const Aviator = () => {
                         </div>
                     </div>
 
-                    {/* Presets */}
                     <div className="grid grid-cols-4 gap-2 mb-3">
                          {[10, 100, 500, 1000].map(amt => (
                              <button 
@@ -408,7 +407,6 @@ export const Aviator = () => {
                          ))}
                     </div>
 
-                    {/* BIG BUTTON */}
                     <button 
                         onClick={handleBetAction}
                         disabled={phase === 'CRASHED' && !uiHasBetForNextRound}
@@ -447,6 +445,15 @@ export const Aviator = () => {
                     onClose={() => setPopup(null)} 
                 />
             )}
+            
+            {toast && (
+                <Toast 
+                    message={toast.message} 
+                    type={toast.type} 
+                    onClose={() => setToast(null)} 
+                />
+            )}
         </div>
     );
 };
+                
