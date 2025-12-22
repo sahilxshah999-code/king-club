@@ -1,33 +1,41 @@
+name: Deploy to InfinityFree
 
-# How to Deploy to InfinityFree (Manual Method)
+on:
+  push:
+    branches: [ main, master ]
 
-Since the automated system (GitHub Action) is timing out due to the firewall, you must upload the files manually. This is the most reliable method for free hosting.
+jobs:
+  web-deploy:
+    name: 🎉 Deploy
+    runs-on: ubuntu-latest
+    steps:
+    - name: 🚚 Get latest code
+      uses: actions/checkout@v4
 
-## Step 1: Build the Website
-You need to convert the code into HTML, CSS, and JS files.
+    - name: 🟢 Install Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: 18
 
-1. Open your project terminal.
-2. Run the build command:
-   ```bash
-   npm run build
-   ```
-   *(If you are on a phone/web editor, look for a "Build" or "Export" button).*
+    - name: 📦 Install Dependencies
+      run: |
+        rm -rf node_modules package-lock.json
+        npm install --legacy-peer-deps
 
-3. This creates a folder named **`dist`**. This folder contains your real website.
+    - name: 🏗️ Build Website
+      run: npm run build
+      env:
+        CI: false
 
-## Step 2: Upload to Server
-1. Login to your **InfinityFree Control Panel**.
-2. Open the **"Online File Manager"**.
-3. Navigate into the **`htdocs`** folder.
-4. **DELETE** everything currently inside `htdocs` (like the default `index2.html`).
-5. **UPLOAD** everything from inside your local **`dist`** folder into `htdocs`.
-   - You should see `index.html`, `index.php`, `.htaccess`, and an `assets` folder inside `htdocs`.
-
-## Step 3: Visit Your Site
-Go to your website URL (e.g., `kingclub.rf.gd`). It should load instantly!
-
----
-
-### Troubleshooting
-- **White Screen?** ensure you uploaded the *contents* of `dist`, not the `dist` folder itself.
-- **404 on Refresh?** Ensure the `.htaccess` file was uploaded. (Note: Some file managers hide dotfiles; this is normal, it's still working).
+    - name: 📂 Sync files to InfinityFree
+      uses: SamKirkland/FTP-Deploy-Action@v4.3.4
+      with:
+        server: ${{ secrets.FTP_SERVER }}
+        username: ${{ secrets.FTP_USERNAME }}
+        password: ${{ secrets.FTP_PASSWORD }}
+        local-dir: ./dist/
+        server-dir: ./htdocs/
+        exclude: |
+          **/.git*
+          **/.git/**
+          **/node_modules/**
