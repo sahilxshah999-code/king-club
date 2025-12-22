@@ -1,10 +1,13 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { auth } from '../../firebase';
+import { auth, db } from '../../firebase';
 import { getSystemSettings, getUserProfile, processSpin } from '../../services/userService';
 import { UserProfile, SystemSettings } from '../../types';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { WinLossPopup } from '../../components/WinLossPopup';
+import { Toast } from '../../components/Toast';
+import { ref, onValue } from 'firebase/database';
 
 export const Spin = () => {
     const navigate = useNavigate();
@@ -14,33 +17,64 @@ export const Spin = () => {
     const [rotation, setRotation] = useState(0);
     const [betAmount] = useState(50); // Fixed at 50 as per requirement
     const [popup, setPopup] = useState<{type: 'win' | 'loss', amount: number} | null>(null);
+    const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+    const [onlinePlayers, setOnlinePlayers] = useState(250);
 
     useEffect(() => {
+        // Fake Players 50-500
+        setOnlinePlayers(Math.floor(Math.random() * (500 - 50 + 1)) + 50);
+        const playerInterval = setInterval(() => {
+            setOnlinePlayers(prev => {
+                const change = Math.floor(Math.random() * 10) - 5; 
+                let next = prev + change;
+                if (next < 50) next = 50;
+                if (next > 500) next = 500;
+                return next;
+            });
+        }, 3000);
+
         const load = async () => {
-            const u = auth.currentUser;
-            if (u) {
-                setUser(await getUserProfile(u.uid));
-                setSettings(await getSystemSettings());
-            }
+            setSettings(await getSystemSettings());
         };
         load();
-    }, []);
+
+        const u = auth.currentUser;
+        if (u) {
+            const userRef = ref(db, `users/${u.uid}`);
+            onValue(userRef, snap => {
+                if (snap.exists()) {
+                    const val = snap.val();
+                    setUser(val);
+                    if (val.balance <= 1) {
+                        setToast({ message: "Insufficient Access Balance (> ₹1 required)", type: 'error' });
+                        setTimeout(() => navigate('/'), 2000);
+                    }
+                }
+            });
+        }
+        return () => clearInterval(playerInterval);
+    }, [navigate]);
+
+    const showToast = (msg: string, type: 'success' | 'error' = 'error') => {
+        setToast({ message: msg, type });
+    };
 
     const handleSpin = async () => {
         if (!user || !settings || isSpinning) return;
         if (user.balance < betAmount) {
-            alert("Insufficient balance! Spin costs ₹" + betAmount);
+            showToast("Insufficient balance! Spin costs ₹" + betAmount, 'error');
             return;
         }
 
         setIsSpinning(true);
         setPopup(null);
         
-        const result = await processSpin(user.uid, betAmount);
+        // Use any to bypass union type property access errors
+        const result: any = await processSpin(user.uid, betAmount);
 
         if (!result.success || result.prizeIndex === undefined || result.prizeValue === undefined) {
             setIsSpinning(false);
-            alert(result.error || "Spin failed");
+            showToast(result.error || "Spin failed", 'error');
             return;
         }
 
@@ -55,8 +89,8 @@ export const Spin = () => {
         setTimeout(() => {
             setIsSpinning(false);
             
-            if (result.prizeValue! > 0) {
-                setPopup({ type: 'win', amount: result.prizeValue! });
+            if (result.prizeValue > 0) {
+                setPopup({ type: 'win', amount: result.prizeValue });
             } else {
                 setPopup({ type: 'loss', amount: betAmount });
             }
@@ -70,9 +104,17 @@ export const Spin = () => {
              <div className="absolute top-0 left-0 w-full h-full opacity-10 bg-[radial-gradient(circle,_#fbbf24_2px,_transparent_2px)] bg-[length:30px_30px]"></div>
 
              <div className="w-full flex justify-between items-center p-4 z-10 text-white">
-                <button onClick={() => navigate('/')}><ChevronLeft /></button>
-                <span className="font-bold text-xl uppercase tracking-widest text-yellow-300 drop-shadow-md">Lucky Spin</span>
-                <div className="bg-black/30 px-3 py-1 rounded-full text-sm border border-white/20">₹{(user?.balance || 0).toFixed(2)}</div>
+                <div className="flex items-center gap-2">
+                    <button onClick={() => navigate('/')}><ChevronLeft /></button>
+                    <span className="font-bold text-xl uppercase tracking-widest text-yellow-300 drop-shadow-md">Lucky Spin</span>
+                </div>
+                <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1 bg-black/20 px-2 py-1 rounded-full border border-white/10 backdrop-blur-sm">
+                        <User size={10} className="text-white" />
+                        <span className="text-[10px] font-bold text-white">{onlinePlayers.toLocaleString()}</span>
+                    </div>
+                    <div className="bg-black/30 px-3 py-1 rounded-full text-sm border border-white/20">₹{(user?.balance || 0).toFixed(2)}</div>
+                </div>
             </div>
 
             <div className="relative mt-8 z-10">
@@ -115,7 +157,12 @@ export const Spin = () => {
                 >
                     {isSpinning ? '...' : `SPIN ₹${betAmount}`}
                 </button>
-                <p className="mt-4 text-white/70 text-xs font-medium">Fixed Bet: ₹50 | Win up to ₹500</p>
+                <div className="mt-4 flex flex-col gap-1">
+                    <p className="text-white/70 text-xs font-medium">Fixed Bet: ₹50 | Win up to ₹500</p>
+                    <p className="text-white/90 text-[10px] font-black uppercase tracking-widest bg-black/20 inline-block px-3 py-1 rounded-full mx-auto">
+                        Limit: 3 Spins / Day (6H Cooldown)
+                    </p>
+                </div>
             </div>
 
             {popup && (
@@ -123,6 +170,13 @@ export const Spin = () => {
                     type={popup.type} 
                     amount={popup.amount} 
                     onClose={() => setPopup(null)} 
+                />
+            )}
+            {toast && (
+                <Toast 
+                    message={toast.message} 
+                    type={toast.type} 
+                    onClose={() => setToast(null)} 
                 />
             )}
         </div>
