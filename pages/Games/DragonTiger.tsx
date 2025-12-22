@@ -1,58 +1,87 @@
+
 import React, { useState, useEffect } from 'react';
-import { auth } from '../../firebase';
+import { auth, db } from '../../firebase';
 import { getUserProfile, playDragonTiger } from '../../services/userService';
 import { UserProfile } from '../../types';
-import { ChevronLeft, Info, Settings } from 'lucide-react';
+import { ChevronLeft, Info, Settings, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { WinLossPopup } from '../../components/WinLossPopup';
+import { Toast } from '../../components/Toast';
+import { ref, onValue } from 'firebase/database';
 
 export const DragonTiger = () => {
     const navigate = useNavigate();
     const [user, setUser] = useState<UserProfile | null>(null);
     const [dealing, setDealing] = useState(false);
     const [result, setResult] = useState<{dragon: number, tiger: number} | null>(null);
+    const [onlinePlayers, setOnlinePlayers] = useState(7620);
     
     // Betting State
     const [selectedZone, setSelectedZone] = useState<'dragon' | 'tiger' | 'tie' | null>(null);
     const [customAmount, setCustomAmount] = useState<string>('10');
     const [popup, setPopup] = useState<{type: 'win' | 'loss', amount: number} | null>(null);
+    const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
 
     useEffect(() => {
+        // Fake Players
+        setOnlinePlayers(Math.floor(Math.random() * (20000 - 5000 + 1)) + 5000);
+        const playerInterval = setInterval(() => {
+            setOnlinePlayers(prev => {
+                const change = Math.floor(Math.random() * 50) - 20; 
+                let next = prev + change;
+                if (next < 5000) next = 5000;
+                if (next > 20000) next = 20000;
+                return next;
+            });
+        }, 3000);
+
         const u = auth.currentUser;
-        if (u) getUserProfile(u.uid).then(setUser);
-    }, []);
+        if (u) {
+            const userRef = ref(db, `users/${u.uid}`);
+            onValue(userRef, (snap) => {
+                if (snap.exists()) {
+                    const val = snap.val();
+                    setUser(val);
+                    if (val.balance <= 1) {
+                        setToast({ message: "Insufficient Access Balance (> ₹1 required)", type: 'error' });
+                        setTimeout(() => navigate('/'), 2000);
+                    }
+                }
+            });
+        } else {
+            navigate('/login');
+        }
+        return () => clearInterval(playerInterval);
+    }, [navigate]);
+
+    const showToast = (msg: string, type: 'success' | 'error' = 'error') => {
+        setToast({ message: msg, type });
+    };
 
     const handleBet = async () => {
         if (!user || !selectedZone || dealing) {
-            if (!selectedZone) alert("Please select a betting zone (Dragon, Tiger, or Tie)");
+            if (!selectedZone) showToast("Please select a betting zone");
             return;
         }
         
         const amount = parseInt(customAmount);
+        const MIN_BET = 1;
+        const MAX_BET = 10000;
         
-        // Validation
-        if (isNaN(amount) || amount < 1) {
-            alert("Minimum bet is ₹1");
-            return;
-        }
-        if (amount > 10000) {
-            alert("Maximum bet is ₹10,000");
-            return;
-        }
-        if (user.balance < amount) {
-            alert("Insufficient Balance");
-            return;
-        }
+        if (isNaN(amount) || amount < MIN_BET) { showToast(`Minimum balance was ${MIN_BET}`); return; }
+        if (amount > MAX_BET) { showToast(`Maximum balance was ${MAX_BET}`); return; }
+        if (user.balance < amount) { showToast("Insufficient Amount"); return; }
 
         setDealing(true);
         setResult(null);
         setPopup(null);
 
-        const res = await playDragonTiger(user.uid, selectedZone, amount);
+        // Use any to bypass union type property access errors
+        const res: any = await playDragonTiger(user.uid, selectedZone, amount);
 
         if (!res.success || !res.dragonCard || !res.tigerCard) {
             setDealing(false);
-            alert(res.error);
+            showToast(res.error || "Error", 'error');
             return;
         }
 
@@ -60,7 +89,7 @@ export const DragonTiger = () => {
 
         // Animation Delay
         setTimeout(() => {
-            setResult({ dragon: res.dragonCard!, tiger: res.tigerCard! });
+            setResult({ dragon: res.dragonCard, tiger: res.tigerCard });
             setDealing(false);
             
             if (res.winAmount && res.winAmount > 0) {
@@ -100,9 +129,12 @@ export const DragonTiger = () => {
                     <span className="text-xs text-gray-400">Balance</span>
                     <span className="font-mono font-bold text-green-400">₹{(user?.balance || 0).toFixed(2)}</span>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 bg-gray-800 px-2 py-1 rounded-full border border-gray-700">
+                        <User size={10} className="text-yellow-500" />
+                        <span className="text-[10px] font-bold text-yellow-500">{onlinePlayers.toLocaleString()}</span>
+                    </div>
                     <Settings size={20} className="text-gray-400" />
-                    <Info size={20} className="text-gray-400" />
                 </div>
             </div>
 
@@ -241,6 +273,14 @@ export const DragonTiger = () => {
                     onClose={() => setPopup(null)} 
                 />
             )}
+            {toast && (
+                <Toast 
+                    message={toast.message} 
+                    type={toast.type} 
+                    onClose={() => setToast(null)} 
+                />
+            )}
         </div>
     );
 };
+            
