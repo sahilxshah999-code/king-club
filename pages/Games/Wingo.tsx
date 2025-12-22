@@ -1,11 +1,13 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { auth, db } from '../../firebase';
-import { getUserProfile, updateUserBalance, placeWingoBet, cleanupWingoData, getWingoNextResult } from '../../services/userService';
+import { getUserProfile, updateUserBalance, placeWingoBet, cleanupWingoData, getWingoNextResult, settleUserWingoRound } from '../../services/userService';
 import { UserProfile } from '../../types';
-import { History, ChevronLeft, AlertCircle } from 'lucide-react';
+import { History, ChevronLeft, AlertCircle, X } from 'lucide-react';
 import { ref, onValue, runTransaction, get, limitToLast, query } from 'firebase/database';
 import { useNavigate } from 'react-router-dom';
 import { WinLossPopup } from '../../components/WinLossPopup';
+import { Toast } from '../../components/Toast';
 
 declare global {
   interface Window {
@@ -26,9 +28,9 @@ interface StagedBet {
     amount: number;
     selection: BetType;
     uid: string;
+    role?: string; 
 }
 
-// Hardcoded to 1min only
 const WINGO_INTERVAL = 60; 
 const WINGO_TAB = '1min';
 
@@ -42,6 +44,10 @@ export const Wingo = () => {
     const [user, setUser] = useState<UserProfile | null>(null);
     const [history, setHistory] = useState<GameResult[]>([]);
     
+    // User Personal History
+    const [myHistory, setMyHistory] = useState<any[]>([]);
+    const [historyModalOpen, setHistoryModalOpen] = useState(false);
+    
     // Betting State
     const [betModalOpen, setBetModalOpen] = useState(false);
     const [selectedBet, setSelectedBet] = useState<BetType | null>(null);
@@ -52,26 +58,72 @@ export const Wingo = () => {
     const [isAnimating, setIsAnimating] = useState(false);
     const [gameResult, setGameResult] = useState<number | null>(null);
     
-    // Win/Loss Popup
-    const [popup, setPopup] = useState<{type: 'win' | 'loss', amount: number} | null>(null);
+    const [popup, setPopup] = useState<{
+        type: 'win' | 'loss';
+        amount: number;
+        gameMode?: 'wingo';
+        periodId?: string;
+        result?: { number: number; color: string; size: string; };
+    } | null>(null);
+    const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
 
     // Refs
     const userRef = useRef(user);
     const periodRef = useRef(0);
     const processedPeriodRef = useRef<number | null>(null);
+    const isMounted = useRef(true);
 
     useEffect(() => {
-        const u = auth.currentUser;
-        if(u) {
-            const userRef = ref(db, `users/${u.uid}`);
-            const unsub = onValue(userRef, (snap) => {
-                if (snap.exists()) {
-                    setUser(snap.val());
+        isMounted.current = true;
+        let userUnsub: (() => void) | undefined;
+
+        const authUnsub = auth.onAuthStateChanged((u) => {
+            if (u) {
+                if (userUnsub) userUnsub();
+                const userRefDb = ref(db, `users/${u.uid}`);
+                userUnsub = onValue(userRefDb, (snap) => {
+                    if (isMounted.current && snap.exists()) {
+                        const val = snap.val();
+                        setUser(val);
+                        if (val.balance <= 1) {
+                            setToast({ message: "Insufficient Access Balance (> ₹1 required)", type: 'error' });
+                            setTimeout(() => navigate('/'), 2000);
+                        }
+                    }
+                });
+            } else {
+                navigate('/login');
+            }
+        });
+
+        return () => {
+            isMounted.current = false;
+            authUnsub();
+            if (userUnsub) userUnsub();
+        };
+    }, [navigate]);
+
+    const showToast = (msg: string, type: 'success' | 'error' = 'error') => {
+        setToast({ message: msg, type });
+    };
+
+    // Fetch User History
+    useEffect(() => {
+        if (user?.uid) {
+            const q = query(ref(db, `users/${user.uid}/wingo_history`), limitToLast(15));
+            const unsub = onValue(q, (snap) => {
+                if (isMounted.current && snap.exists()) {
+                    const data = Object.values(snap.val());
+                    // Sort descending by timestamp (newest first)
+                    data.sort((a: any, b: any) => b.timestamp - a.timestamp);
+                    setMyHistory(data);
+                } else if (isMounted.current) {
+                    setMyHistory([]);
                 }
             });
             return () => unsub();
         }
-    }, []);
+    }, [user?.uid]);
 
     useEffect(() => { userRef.current = user; }, [user]);
     useEffect(() => { periodRef.current = period; }, [period]);
@@ -100,6 +152,7 @@ export const Wingo = () => {
 
     useEffect(() => {
         const tick = () => {
+            if (!isMounted.current) return;
             const { periodId, secondsRemaining } = calculateTimeState();
             
             setTimeLeft(secondsRemaining);
@@ -118,9 +171,9 @@ export const Wingo = () => {
     }, []);
 
     useEffect(() => {
-        // Query last 10 history items
         const historyRef = query(ref(db, `game_history/wingo/${WINGO_TAB}`), limitToLast(10));
         const unsub = onValue(historyRef, (snapshot) => {
+            if (!isMounted.current) return;
             const data = snapshot.val();
             if (data) {
                 const arr = Object.values(data) as GameResult[];
@@ -137,13 +190,6 @@ export const Wingo = () => {
     const calculateTotalPayout = (candidateNum: number, bets: StagedBet[]) => {
         let totalPayout = 0;
         
-        // Winning Conditions Logic
-        // Green: 1,3,5,7,9 (5 is Green+Violet)
-        // Red: 0,2,4,6,8 (0 is Red+Violet)
-        // Violet: 0,5
-        // Small: 0-4
-        // Big: 5-9
-
         const isGreen = [1,3,5,7,9].includes(candidateNum);
         const isRed = [0,2,4,6,8].includes(candidateNum);
         const isViolet = candidateNum === 0 || candidateNum === 5;
@@ -154,8 +200,6 @@ export const Wingo = () => {
             let winMultiplier = 0;
             const sel = bet.selection;
 
-            // Robust number check: handle both number type and string numbers (e.g. "5")
-            // A bet is a number bet if it's not one of the special strings
             const isNumberBet = !isNaN(Number(sel)) && !['green', 'violet', 'red', 'big', 'small'].includes(String(sel));
 
             if (isNumberBet) {
@@ -185,10 +229,13 @@ export const Wingo = () => {
         const resultRef = ref(db, `game_history/wingo/${WINGO_TAB}/${completedPeriod}`);
 
         try {
-            await runTransaction(resultRef, (currentData) => {
-                if (currentData !== null) return;
-                return { status: "calculating" };
-            });
+            const existingSnap = await get(resultRef);
+            if (!existingSnap.exists()) {
+                await runTransaction(resultRef, (currentData) => {
+                    if (currentData !== null) return;
+                    return { status: "calculating" };
+                });
+            }
 
             const checkSnap = await get(resultRef);
             const val = checkSnap.val();
@@ -197,21 +244,21 @@ export const Wingo = () => {
                 const betsSnap = await get(stageRef);
                 const bets = betsSnap.exists() ? (Object.values(betsSnap.val()) as StagedBet[]) : [];
                 
+                const realBets = bets.filter(b => b.role !== 'admin' && b.role !== 'demo');
+
                 const forcedResult = await getWingoNextResult();
                 let winnerNum: number | null = null;
                 
                 if (forcedResult !== null && forcedResult >= 0 && forcedResult <= 9) {
                      winnerNum = forcedResult;
-                } else if (bets.length === 0) {
+                } else if (realBets.length === 0) {
                      winnerNum = Math.floor(Math.random() * 10);
                 } else {
-                     // AUTOMATED SELECTION: Choose number with lowest total payout
                      let minPayout = Infinity;
                      let candidates: number[] = [];
                      
-                     // Check every possible result (0-9)
                      for (let i = 0; i <= 9; i++) {
-                         const payout = calculateTotalPayout(i, bets);
+                         const payout = calculateTotalPayout(i, realBets);
                          if (payout < minPayout) {
                              minPayout = payout;
                              candidates = [i];
@@ -219,7 +266,6 @@ export const Wingo = () => {
                              candidates.push(i);
                          }
                      }
-                     // Pick random from best candidates
                      winnerNum = candidates[Math.floor(Math.random() * candidates.length)];
                 }
 
@@ -239,7 +285,7 @@ export const Wingo = () => {
             }
             
             const finalSnap = await get(resultRef);
-            if (finalSnap.exists() && finalSnap.val().number !== undefined) {
+            if (isMounted.current && finalSnap.exists() && finalSnap.val().number !== undefined) {
                  setIsAnimating(true);
                  const res = finalSnap.val() as GameResult;
                  setGameResult(res.number);
@@ -247,16 +293,24 @@ export const Wingo = () => {
             }
 
         } catch (e) {
-            console.error("Round processing error", e);
+            console.warn("Round sync skipped:", e);
         }
 
-        setTimeout(() => {
-            setIsAnimating(false);
-            setGameResult(null);
-        }, 4000);
+        if (isMounted.current) {
+            setTimeout(() => {
+                if (isMounted.current) {
+                    setIsAnimating(false);
+                    setGameResult(null);
+                }
+            }, 4000);
+        }
     };
 
     const checkWins = (result: GameResult, periodNum: number) => {
+        if(userRef.current) {
+            settleUserWingoRound(userRef.current.uid, periodNum, result.number);
+        }
+
         if (!window.activeBets) return;
 
         const currentPeriodBets = window.activeBets.filter((b: any) => b.period === periodNum);
@@ -276,7 +330,6 @@ export const Wingo = () => {
             let multiplier = 0;
             const sel = bet.selection;
 
-            // Robust check similar to payout calculation
             const isNumberBet = !isNaN(Number(sel)) && !['green', 'violet', 'red', 'big', 'small'].includes(String(sel));
 
             if (isNumberBet) {
@@ -299,13 +352,22 @@ export const Wingo = () => {
             }
         });
 
-        if (totalWin > 0) {
-            if(userRef.current) {
+        if (totalWin > 0 || currentPeriodBets.length > 0) {
+            if (totalWin > 0 && userRef.current) {
                 updateUserBalance(userRef.current.uid, userRef.current.balance + totalWin);
             }
-            setPopup({ type: 'win', amount: totalWin });
-        } else if (currentPeriodBets.length > 0) {
-            setPopup({ type: 'loss', amount: totalBetAmount });
+            
+            setPopup({
+                type: totalWin > 0 ? 'win' : 'loss',
+                amount: totalWin > 0 ? totalWin : totalBetAmount,
+                gameMode: 'wingo',
+                periodId: periodNum.toString(),
+                result: {
+                    number: result.number,
+                    color: result.color,
+                    size: result.size
+                }
+            });
         }
 
         window.activeBets = window.activeBets.filter((b: any) => b.period !== periodNum);
@@ -313,7 +375,7 @@ export const Wingo = () => {
 
     const openBetModal = (selection: BetType) => {
         if (timeLeft <= 5) {
-            alert("Betting is closed for this round!");
+            showToast("Betting is closed for this round!", 'error');
             return;
         }
         setSelectedBet(selection);
@@ -324,20 +386,20 @@ export const Wingo = () => {
 
     const confirmBet = async () => {
         if (timeLeft <= 5) {
-            alert("Betting is closed!");
+            showToast("Betting is closed!", 'error');
             return;
         }
         if (!user || selectedBet === null) return;
         const totalBet = contractMoney * multiplier;
         
         if (user.balance < totalBet) {
-            alert("Insufficient Balance");
+            showToast("Insufficient Balance", 'error');
             return;
         }
         
         const res = await placeWingoBet(user.uid, totalBet, selectedBet, period, WINGO_TAB);
         if (!res.success) {
-            alert(res.error);
+            showToast(res.error || "Failed to place bet", 'error');
             return;
         }
         
@@ -351,6 +413,7 @@ export const Wingo = () => {
         
         window.activeBets = window.activeBets || [];
         window.activeBets.push(pendingBet);
+        showToast("Bet Placed!", 'success');
     };
 
     const getBallClass = (num: number) => {
@@ -373,10 +436,10 @@ export const Wingo = () => {
                         </div>
                     </div>
                     <div className="flex gap-2">
-                         <div className="flex flex-col items-center">
+                         <button onClick={() => setHistoryModalOpen(true)} className="flex flex-col items-center">
                             <History size={20} />
                             <span className="text-[10px]">History</span>
-                         </div>
+                         </button>
                     </div>
                 </div>
                 
@@ -411,7 +474,6 @@ export const Wingo = () => {
                     </div>
                 </div>
 
-                {/* Betting Closed Overlay for last 5 seconds */}
                 {timeLeft <= 5 && (
                     <div className="absolute inset-0 bg-black/50 z-20 flex items-center justify-center rounded-b-3xl backdrop-blur-[2px]">
                          <div className="bg-red-600 text-white px-6 py-2 rounded-full font-bold flex items-center gap-2 animate-pulse shadow-lg">
@@ -426,7 +488,7 @@ export const Wingo = () => {
                     <div className="flex justify-between gap-4 mb-6">
                         <button onClick={() => openBetModal('green')} className="flex-1 bg-[#10b981] text-white py-3 rounded-tr-2xl rounded-bl-2xl font-bold shadow-lg shadow-green-200 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed">Green</button>
                         <button onClick={() => openBetModal('violet')} className="flex-1 bg-[#8b5cf6] text-white py-3 rounded-lg font-bold shadow-lg shadow-purple-200 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed">Violet</button>
-                        <button onClick={() => openBetModal('red')} className="flex-1 bg-[#ef4444] text-white py-3 rounded-tl-2xl rounded-br-2xl font-bold shadow-lg shadow-red-200 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed">Red</button>
+                            <button onClick={() => openBetModal('red')} className="flex-1 bg-[#ef4444] text-white py-3 rounded-tl-2xl rounded-br-2xl font-bold shadow-lg shadow-red-200 active:scale-95 transition disabled:opacity-50 disabled:cursor-not-allowed">Red</button>
                     </div>
 
                     <div className="grid grid-cols-5 gap-y-4 justify-items-center mb-6 bg-[#f7f8ff] p-4 rounded-xl">
@@ -446,7 +508,6 @@ export const Wingo = () => {
                 </div>
             </div>
 
-             {/* Recent History Table */}
              <div className="px-4 pb-4">
                  <div className="bg-white rounded-xl shadow-lg p-4">
                      <h3 className="text-gray-700 font-bold mb-3 flex items-center gap-2">
@@ -459,7 +520,7 @@ export const Wingo = () => {
                                      <th className="p-2">Period</th>
                                      <th className="p-2">Number</th>
                                      <th className="p-2">Big/Small</th>
-                                       <th className="p-2">Color</th>
+                                     <th className="p-2">Color</th>
                                  </tr>
                              </thead>
                              <tbody className="divide-y divide-gray-100">
@@ -481,9 +542,8 @@ export const Wingo = () => {
                  </div>
              </div>
 
-            {/* Betting Modal */}
             {betModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
+                <div className="fixed inset-0 z-[100] flex items-end justify-center bg-black/60 backdrop-blur-sm animate-fade-in">
                     <div className="bg-white w-full max-w-md rounded-t-3xl p-6 shadow-2xl animate-slide-up">
                         <div className="text-center mb-6">
                             <h3 className="font-bold text-xl text-gray-800 uppercase tracking-widest">
@@ -538,6 +598,60 @@ export const Wingo = () => {
                 </div>
             )}
 
+            {historyModalOpen && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in p-4">
+                    <div className="bg-white w-full max-w-md rounded-2xl overflow-hidden shadow-2xl animate-slide-up flex flex-col max-h-[80vh]">
+                        <div className="bg-[#d93025] p-4 text-white flex justify-between items-center">
+                            <h3 className="font-bold text-lg">My Bet History (Last 15)</h3>
+                            <button onClick={() => setHistoryModalOpen(false)}><X size={20}/></button>
+                        </div>
+                        <div className="overflow-y-auto flex-1 p-2">
+                            {myHistory.length === 0 ? (
+                                <div className="text-center text-gray-400 py-10">No history found</div>
+                            ) : (
+                                <table className="w-full text-xs text-center">
+                                    <thead className="text-gray-500 border-b">
+                                        <tr>
+                                            <th className="py-2">Period</th>
+                                            <th className="py-2">Select</th>
+                                            <th className="py-2">Result</th>
+                                            <th className="py-2">Amount</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                        {myHistory.map((bet, i) => (
+                                            <tr key={i} className="h-10">
+                                                <td className="text-gray-600 font-mono">{bet.period.toString().slice(-4)}</td>
+                                                <td>
+                                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase text-white 
+                                                        ${bet.selection === 'green' ? 'bg-green-500' : 
+                                                          bet.selection === 'red' ? 'bg-red-500' : 
+                                                          bet.selection === 'violet' ? 'bg-purple-500' : 
+                                                          bet.selection === 'big' ? 'bg-yellow-500' : 
+                                                          bet.selection === 'small' ? 'bg-blue-500' : 'bg-gray-800'}`}>
+                                                        {bet.selection}
+                                                    </span>
+                                                </td>
+                                                <td className="font-bold">
+                                                    {bet.status === 'pending' ? (
+                                                        <span className="text-orange-500">Pending</span>
+                                                    ) : bet.status === 'win' ? (
+                                                        <span className="text-green-600">+₹{bet.winAmount}</span>
+                                                    ) : (
+                                                        <span className="text-red-500">-₹{bet.amount}</span>
+                                                    )}
+                                                </td>
+                                                <td className="font-bold text-gray-700">₹{bet.amount}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {isAnimating && (
                 <div className="fixed inset-0 z-40 bg-black/80 flex items-center justify-center animate-fade-in">
                     <div className="text-white text-center">
@@ -556,10 +670,19 @@ export const Wingo = () => {
                 <WinLossPopup 
                     type={popup.type} 
                     amount={popup.amount} 
+                    gameMode={popup.gameMode}
+                    periodId={popup.periodId}
+                    result={popup.result}
                     onClose={() => setPopup(null)} 
+                />
+            )}
+            {toast && (
+                <Toast 
+                    message={toast.message} 
+                    type={toast.type} 
+                    onClose={() => setToast(null)} 
                 />
             )}
         </div>
     );
 };
-                
