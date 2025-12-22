@@ -3,391 +3,196 @@ import { auth, db } from '../firebase';
 import { createTransaction, getUserProfile, getSystemSettings } from '../services/userService';
 import { UserProfile, SystemSettings } from '../types';
 import { ref, onValue } from 'firebase/database';
-import { ChevronLeft, History, CreditCard, Bitcoin, Copy, CheckCircle, Wallet as WalletIcon, Trophy, Gift } from 'lucide-react';
+import { ChevronLeft, History, CreditCard, Bitcoin, Copy, Wallet as WalletIcon, Trophy, Gift } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Toast } from '../components/Toast';
+
+const BalanceCard = ({label, amount, icon, color}: any) => (
+    <div className="bg-[#151515] p-3 rounded-2xl shadow-lg border border-white/5 flex flex-col items-center text-center group hover:border-white/10 transition">
+        <div className={`p-2 rounded-xl mb-2 bg-${color}-500/10 text-${color}-500 group-hover:scale-110 transition`}>{icon}</div>
+        <span className="text-[9px] text-gray-500 font-black uppercase tracking-widest mb-0.5">{label}</span>
+        <span className={`font-black text-sm text-${color}-400`}>₹{(amount||0).toFixed(0)}</span>
+    </div>
+);
+
+const MethodBtn = ({label, icon, active, onClick, color}: any) => (
+    <button onClick={onClick} className={`flex-1 flex flex-col items-center gap-2 p-3 rounded-2xl border transition active:scale-95 ${active ? `border-${color}-500 bg-${color}-500/10 text-${color}-500` : 'border-white/5 bg-black/20 text-gray-500 hover:border-white/20'}`}>
+        {icon}
+        <span className="text-[10px] font-black uppercase tracking-wide">{label}</span>
+    </button>
+);
 
 export const Wallet = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw'>('deposit');
   const [method, setMethod] = useState<'UPI' | 'USDT'>('UPI');
-  
   const [amount, setAmount] = useState('');
-  const [details, setDetails] = useState(''); // UTR or TxHash or UPI ID or Wallet Addr
-  
+  const [details, setDetails] = useState(''); 
   const [user, setUser] = useState<UserProfile | null>(null);
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [historyList, setHistoryList] = useState<any[]>([]);
-
-  // Toast State
   const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
 
   useEffect(() => {
-      // Check for navigation state (e.g. clicked Withdraw on Home)
-      if (location.state && (location.state as any).tab) {
-          setActiveTab((location.state as any).tab);
-      }
+      if (location.state && (location.state as any).tab) setActiveTab((location.state as any).tab);
   }, [location]);
 
   useEffect(() => {
-    const load = async () => {
-        const s = await getSystemSettings();
-        setSettings(s);
-    };
-    load();
-
+    getSystemSettings().then(setSettings);
     const unsub = auth.onAuthStateChanged(async (u) => {
       if (u) {
         setUser(await getUserProfile(u.uid));
-        // Listen to transaction history
-        const txRef = ref(db, 'transactions');
-        onValue(txRef, (snapshot) => {
+        onValue(ref(db, 'transactions'), (snapshot) => {
             const data = snapshot.val();
             if (data) {
-                const myTx = Object.values(data)
-                    .filter((t: any) => t.uid === u.uid)
-                    .sort((a: any, b: any) => b.timestamp - a.timestamp);
+                const myTx = Object.values(data).filter((t: any) => t.uid === u.uid).sort((a: any, b: any) => b.timestamp - a.timestamp);
                 setHistoryList(myTx);
             }
         });
-        
-        // Listen to live balance updates
-        const userRef = ref(db, `users/${u.uid}`);
-        onValue(userRef, (snapshot) => {
-            if(snapshot.exists()) {
-                setUser(snapshot.val());
-            }
-        });
+        onValue(ref(db, `users/${u.uid}`), (snapshot) => { if(snapshot.exists()) setUser(snapshot.val()); });
       }
     });
     return () => unsub();
   }, []);
 
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-      setToast({ message, type });
-  };
-
-  const copyToClipboard = (text: string) => {
-      navigator.clipboard.writeText(text);
-      showToast("Copied to clipboard!", 'success');
-  };
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => setToast({ message, type });
+  const copyToClipboard = (text: string) => { navigator.clipboard.writeText(text); showToast("Copied!", 'success'); };
 
   const handleSubmit = async () => {
-    if (!user || !amount) {
-        showToast("Please enter an amount", 'error');
-        return;
-    }
+    if (!user || !amount) { showToast("Please enter an amount", 'error'); return; }
     const val = parseFloat(amount);
-    
-    if (isNaN(val) || val <= 0) {
-        showToast("Invalid amount", 'error');
-        return;
-    }
+    if (isNaN(val) || val <= 0) { showToast("Invalid amount", 'error'); return; }
 
     if (activeTab === 'deposit') {
-        if (settings?.minDeposit && val < settings.minDeposit) {
-            showToast(`Minimum deposit is ₹${settings.minDeposit}`, 'error');
-            return;
-        }
-        if (settings?.maxDeposit && val > settings.maxDeposit) {
-            showToast(`Maximum deposit is ₹${settings.maxDeposit}`, 'error');
-            return;
-        }
+        if (settings?.minDeposit && val < settings.minDeposit) return showToast(`Min deposit ₹${settings.minDeposit}`, 'error');
+        if (settings?.maxDeposit && val > settings.maxDeposit) return showToast(`Max deposit ₹${settings.maxDeposit}`, 'error');
     }
-
     if (activeTab === 'withdraw') {
-        if (settings?.minWithdraw && val < settings.minWithdraw) {
-            showToast(`Minimum withdrawal is ₹${settings.minWithdraw}`, 'error');
-            return;
-        }
-        if (settings?.maxWithdraw && val > settings.maxWithdraw) {
-            showToast(`Maximum withdrawal is ₹${settings.maxWithdraw}`, 'error');
-            return;
-        }
-
-        // Enforce restriction: Only withdraw winning balance
-        if (val > (user.winningBalance || 0)) {
-            showToast(`Insufficient Winning Balance. Max: ₹${(user.winningBalance || 0).toFixed(2)}`, 'error');
-            return;
-        }
-        
-        if (val > user.balance) {
-             showToast("Insufficient total balance", 'error');
-             return;
-        }
+        if (settings?.minWithdraw && val < settings.minWithdraw) return showToast(`Min withdrawal ₹${settings.minWithdraw}`, 'error');
+        if (settings?.maxWithdraw && val > settings.maxWithdraw) return showToast(`Max withdrawal ₹${settings.maxWithdraw}`, 'error');
+        if (val > (user.winningBalance || 0)) return showToast(`Insufficient Winning Balance.`, 'error');
     }
-
-    if (!details.trim()) {
-        const msg = activeTab === 'deposit' 
-            ? "Please enter the Transaction Reference/Hash" 
-            : method === 'UPI' ? "Please enter your UPI ID" : "Please enter your Wallet Address";
-        showToast(msg, 'error');
-        return;
-    }
-
-    let detailsString = "";
-    if (activeTab === 'deposit') {
-        detailsString = method === 'UPI' ? `UTR: ${details}` : `TxHash: ${details}`;
-    } else {
-        detailsString = method === 'UPI' ? `UPI: ${details}` : `Address: ${details}`;
-    }
+    if (!details.trim()) return showToast(activeTab === 'deposit' ? "Enter UTR/TxHash" : "Enter Payment Details", 'error');
 
     try {
         await createTransaction({
-            uid: user.uid,
-            type: activeTab,
-            amount: val,
-            method: method,
-            details: detailsString
+            uid: user.uid, type: activeTab, amount: val, method: method,
+            details: activeTab === 'deposit' ? (method === 'UPI' ? `UTR: ${details}` : `TxHash: ${details}`) : (method === 'UPI' ? `UPI: ${details}` : `Address: ${details}`)
         });
-        
-        showToast(`${activeTab === 'deposit' ? 'Deposit request sent! Admin approval required.' : 'Withdrawal request sent!'}`, 'success');
-        setAmount('');
-        setDetails('');
-    } catch (err: any) {
-        showToast(err.message, 'error');
-    }
+        showToast("Request Submitted!", 'success');
+        setAmount(''); setDetails('');
+    } catch (err: any) { showToast(err.message, 'error'); }
   };
 
-  if (!settings) return <div className="p-10 text-center">Loading Wallet...</div>;
+  if (!settings) return <div className="p-10 text-center bg-[#0a0a0a] text-white">Loading...</div>;
 
   return (
-    <div className="min-h-screen bg-[#f7f8ff] flex flex-col">
-        {/* Header */}
-        <div className="bg-[#d93025] p-4 text-white pb-10 rounded-b-[2rem] shadow-lg relative shrink-0 z-0">
-             <div className="flex justify-between items-center mb-2">
-                <button onClick={() => navigate('/')} className="p-1 hover:bg-white/10 rounded-full transition"><ChevronLeft /></button>
-                <h1 className="text-xl font-bold">Wallet</h1>
-                <div className="w-6"></div> 
+    <div className="min-h-screen bg-[#0a0a0a] flex flex-col font-sans text-white">
+        <div className="bg-gradient-to-b from-[#1a1a1a] to-[#0a0a0a] p-4 text-white pb-10 rounded-b-[2.5rem] shadow-2xl relative shrink-0 z-0 border-b border-white/5">
+             <div className="flex justify-between items-center mb-4">
+                <button onClick={() => navigate('/')} className="p-2 hover:bg-white/10 rounded-full transition"><ChevronLeft /></button>
+                <h1 className="text-lg font-black tracking-widest uppercase">Wallet</h1>
+                <div className="w-10"></div> 
             </div>
             
             <div className="text-center">
-                <p className="text-white/80 text-sm mb-1 font-medium">Total Balance</p>
-                <h1 className="text-3xl font-black tracking-tight">₹{(user?.balance || 0).toFixed(2)}</h1>
+                <p className="text-gray-500 text-xs mb-1 font-bold uppercase tracking-widest">Total Balance</p>
+                <h1 className="text-4xl font-black tracking-tight text-white">₹{(user?.balance || 0).toFixed(2)}</h1>
             </div>
         </div>
 
-        {/* Main Content Area */}
         <div className="px-4 -mt-8 flex-1 flex flex-col pb-24 relative z-10">
-            
-            {/* Balance Breakdown Cards */}
-            <div className="grid grid-cols-3 gap-2 mb-4">
-                 <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
-                     <div className="bg-blue-100 p-2 rounded-full mb-1">
-                        <WalletIcon size={16} className="text-blue-600" />
-                     </div>
-                     <span className="text-[10px] text-gray-500 font-bold uppercase">Deposit</span>
-                     <span className="font-black text-gray-800 text-sm">₹{(user?.depositBalance || 0).toFixed(0)}</span>
-                 </div>
-                 <div className="bg-white p-3 rounded-xl shadow-sm border-2 border-green-100 flex flex-col items-center text-center relative overflow-hidden">
-                     <div className="absolute top-0 right-0 bg-green-500 text-white text-[8px] font-bold px-1.5 rounded-bl">WITHDRAW</div>
-                     <div className="bg-green-100 p-2 rounded-full mb-1">
-                        <Trophy size={16} className="text-green-600" />
-                     </div>
-                     <span className="text-[10px] text-gray-500 font-bold uppercase">Winning</span>
-                     <span className="font-black text-green-600 text-sm">₹{(user?.winningBalance || 0).toFixed(0)}</span>
-                 </div>
-                 <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center text-center">
-                     <div className="bg-yellow-100 p-2 rounded-full mb-1">
-                        <Gift size={16} className="text-yellow-600" />
-                     </div>
-                     <span className="text-[10px] text-gray-500 font-bold uppercase">Bonus</span>
-                     <span className="font-black text-gray-800 text-sm">₹{(user?.bonusBalance || 0).toFixed(0)}</span>
-                 </div>
+            <div className="grid grid-cols-3 gap-3 mb-6">
+                 <BalanceCard label="Deposit" amount={user?.depositBalance} icon={<WalletIcon size={16}/>} color="blue"/>
+                 <BalanceCard label="Winning" amount={user?.winningBalance} icon={<Trophy size={16}/>} color="green"/>
+                 <BalanceCard label="Bonus" amount={user?.bonusBalance} icon={<Gift size={16}/>} color="purple"/>
             </div>
 
-            {/* Action Tabs (Deposit/Withdraw) */}
-            <div className="bg-white rounded-2xl shadow-md p-1.5 flex mb-4">
-                <button 
-                    onClick={() => { setActiveTab('deposit'); setDetails(''); }} 
-                    className={`flex-1 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'deposit' ? 'bg-gradient-to-r from-[#d93025] to-red-500 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}
-                >
-                    Deposit
-                </button>
-                <button 
-                    onClick={() => { setActiveTab('withdraw'); setDetails(''); }} 
-                    className={`flex-1 py-3 rounded-xl font-bold text-sm transition ${activeTab === 'withdraw' ? 'bg-gradient-to-r from-[#d93025] to-red-500 text-white shadow-md' : 'text-gray-500 hover:bg-gray-50'}`}
-                >
-                    Withdraw
-                </button>
+            <div className="bg-[#151515] rounded-2xl border border-white/5 p-1.5 flex mb-6 shadow-lg">
+                <button onClick={() => { setActiveTab('deposit'); setDetails(''); }} className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition ${activeTab === 'deposit' ? 'bg-[#d93025] text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}>Deposit</button>
+                <button onClick={() => { setActiveTab('withdraw'); setDetails(''); }} className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition ${activeTab === 'withdraw' ? 'bg-[#d93025] text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}>Withdraw</button>
             </div>
 
-            {/* Input Card */}
-            <div className="bg-white p-6 rounded-2xl shadow-lg mb-6">
-                
-                {/* Method Selector (UPI/USDT) */}
+            <div className="bg-[#151515] p-6 rounded-[2rem] shadow-xl border border-white/5 mb-6">
                 <div className="flex gap-3 mb-6">
-                    <button 
-                        onClick={() => setMethod('UPI')}
-                        className={`flex-1 flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition ${method === 'UPI' ? 'border-red-500 bg-red-50 text-red-600' : 'border-gray-100 bg-gray-50 text-gray-400'}`}
-                    >
-                        <CreditCard size={24} />
-                        <span className="text-xs font-bold">UPI / Bank</span>
-                    </button>
-                    <button 
-                        onClick={() => setMethod('USDT')}
-                        className={`flex-1 flex flex-col items-center gap-1 p-3 rounded-xl border-2 transition ${method === 'USDT' ? 'border-green-500 bg-green-50 text-green-600' : 'border-gray-100 bg-gray-50 text-gray-400'}`}
-                    >
-                        <Bitcoin size={24} />
-                        <span className="text-xs font-bold">USDT (TRC20)</span>
-                    </button>
+                    <MethodBtn label="UPI / Bank" icon={<CreditCard size={20}/>} active={method==='UPI'} onClick={()=>setMethod('UPI')} color="red"/>
+                    <MethodBtn label="USDT (TRC20)" icon={<Bitcoin size={20}/>} active={method==='USDT'} onClick={()=>setMethod('USDT')} color="green"/>
                 </div>
 
-                {/* Amount Input */}
-                <div className="mb-4">
-                    <div className="flex justify-between items-center mb-2">
-                        <label className="text-gray-500 font-bold text-xs uppercase tracking-wide">Amount (₹)</label>
-                        {activeTab === 'withdraw' && (
-                            <span className="text-xs text-green-600 font-bold">Max: ₹{(user?.winningBalance || 0).toFixed(0)}</span>
-                        )}
-                    </div>
-                    <div className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 flex items-center focus-within:border-gray-300 transition">
-                        <span className="text-gray-400 font-bold mr-2">₹</span>
-                        <input 
-                            type="number" 
-                            value={amount} 
-                            onChange={(e) => setAmount(e.target.value)} 
-                            className="w-full bg-transparent outline-none text-black font-bold text-lg placeholder-gray-300" 
-                            placeholder={activeTab === 'deposit' ? `${settings.minDeposit}` : `${settings.minWithdraw}`} 
-                        />
-                    </div>
-                    <div className="flex justify-between mt-1 px-1 text-[10px] font-bold text-gray-400">
-                        <span>Min: ₹{activeTab === 'deposit' ? settings.minDeposit : settings.minWithdraw}</span>
-                        <span>Max: ₹{activeTab === 'deposit' ? settings.maxDeposit : settings.maxWithdraw}</span>
-                    </div>
-                </div>
-
-                {/* Dynamic Content Based on Tab & Method */}
                 <div className="mb-6">
-                    {/* DEPOSIT VIEW */}
+                    <div className="flex justify-between items-center mb-2">
+                        <label className="text-gray-500 font-bold text-[10px] uppercase tracking-wide">Amount (₹)</label>
+                        {activeTab === 'withdraw' && <span className="text-[10px] text-green-500 font-bold">Max: ₹{(user?.winningBalance || 0).toFixed(0)}</span>}
+                    </div>
+                    <div className="bg-black/30 border border-white/10 rounded-xl px-4 py-3 flex items-center focus-within:border-white/30 transition">
+                        <span className="text-gray-400 font-bold mr-2">₹</span>
+                        <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full bg-transparent outline-none text-white font-bold text-lg placeholder-gray-700" placeholder="0.00" />
+                    </div>
+                    <div className="flex justify-between mt-1 px-1 text-[9px] font-bold text-gray-500 uppercase">
+                        <span>Min: {activeTab === 'deposit' ? settings.minDeposit : settings.minWithdraw}</span>
+                        <span>Max: {activeTab === 'deposit' ? settings.maxDeposit : settings.maxWithdraw}</span>
+                    </div>
+                </div>
+
+                <div className="mb-6 space-y-4">
                     {activeTab === 'deposit' && (
-                        <>
-                            <div className="mb-4 p-4 bg-gray-50 rounded-xl border border-dashed border-gray-300 text-center">
-                                <p className="text-xs text-gray-500 font-medium mb-2">
-                                    {method === 'UPI' ? 'Scan to Pay' : 'Scan USDT (TRC20)'}
-                                </p>
-                                
-                                {method === 'UPI' && settings.adminQrCodeUrl && (
-                                    <div className="flex justify-center mb-3">
-                                         <div className="bg-white p-2 rounded-lg shadow-sm border border-gray-200">
-                                            <img 
-                                                src={settings.adminQrCodeUrl} 
-                                                alt="Payment QR" 
-                                                className="w-32 h-32 object-contain" 
-                                            />
-                                         </div>
-                                    </div>
-                                )}
-
-                                {method === 'USDT' && settings.adminUsdtQrCodeUrl && (
-                                    <div className="flex justify-center mb-3">
-                                         <div className="bg-white p-2 rounded-lg shadow-sm border border-gray-200">
-                                            <img 
-                                                src={settings.adminUsdtQrCodeUrl} 
-                                                alt="USDT QR" 
-                                                className="w-32 h-32 object-contain" 
-                                            />
-                                         </div>
-                                    </div>
-                                )}
-
-                                {method === 'UPI' && (
-                                    <div className="flex flex-col items-center">
-                                        <p className="text-xs font-bold text-gray-700 mb-1">UPI ID</p>
-                                        <div className="flex items-center gap-2 bg-white px-3 py-1 rounded border border-gray-200">
-                                            <span className="text-sm font-mono select-all">{settings.adminUpiId}</span>
-                                            <button onClick={() => copyToClipboard(settings.adminUpiId)}><Copy size={14} className="text-gray-400 hover:text-black"/></button>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {method === 'USDT' && (
-                                     <div className="flex flex-col items-center">
-                                        <p className="text-xs font-bold text-gray-700 mb-1">USDT (TRC20) Address</p>
-                                        <div className="flex items-center gap-2 bg-white px-3 py-1 rounded border border-gray-200 max-w-full overflow-hidden">
-                                            <span className="text-xs font-mono select-all truncate">{settings.adminUsdtAddress || 'Address not set'}</span>
-                                            <button onClick={() => copyToClipboard(settings.adminUsdtAddress)}><Copy size={14} className="text-gray-400 hover:text-black"/></button>
-                                        </div>
-                                    </div>
-                                )}
+                        <div className="p-6 bg-black/30 rounded-xl border border-dashed border-white/20 text-center">
+                            {method === 'UPI' && settings.adminQrCodeUrl && (
+                                <div className="bg-white p-2 rounded-xl inline-block mb-4">
+                                    <img src={settings.adminQrCodeUrl} className="w-64 h-64 object-contain rounded-lg" alt="QR" />
+                                </div>
+                            )}
+                            {method === 'USDT' && settings.adminUsdtQrCodeUrl && (
+                                <div className="bg-white p-2 rounded-xl inline-block mb-4">
+                                    <img src={settings.adminUsdtQrCodeUrl} className="w-64 h-64 object-contain rounded-lg" alt="QR" />
+                                </div>
+                            )}
+                            <div className="flex flex-col items-center gap-2">
+                                <p className="text-[10px] font-bold text-gray-500 uppercase">{method === 'UPI' ? 'UPI ID' : 'Wallet Address'}</p>
+                                <div className="flex items-center gap-2 bg-white/5 px-4 py-3 rounded-xl border border-white/5 cursor-pointer hover:bg-white/10 transition w-full justify-between" onClick={() => copyToClipboard(method === 'UPI' ? settings.adminUpiId : settings.adminUsdtAddress)}>
+                                    <span className="text-xs font-mono text-white select-all truncate">{method === 'UPI' ? settings.adminUpiId : settings.adminUsdtAddress}</span>
+                                    <Copy size={14} className="text-gray-400 shrink-0"/>
+                                </div>
                             </div>
-
-                            <label className="block text-gray-500 font-bold text-xs mb-2 uppercase tracking-wide">
-                                {method === 'UPI' ? 'UTR / Reference Number' : 'Transaction Hash (TxID)'}
-                            </label>
-                            <input 
-                                type="text" 
-                                value={details} 
-                                onChange={(e) => setDetails(e.target.value)} 
-                                className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-black outline-none focus:border-red-200 transition text-sm" 
-                                placeholder={method === 'UPI' ? '12 digit UTR' : 'Paste transaction hash'} 
-                            />
-                        </>
+                        </div>
                     )}
-
-                    {/* WITHDRAW VIEW */}
-                    {activeTab === 'withdraw' && (
-                        <>
-                            <label className="block text-gray-500 font-bold text-xs mb-2 uppercase tracking-wide">
-                                {method === 'UPI' ? 'Your UPI ID' : 'Your USDT (TRC20) Address'}
-                            </label>
-                            <input 
-                                type="text" 
-                                value={details} 
-                                onChange={(e) => setDetails(e.target.value)} 
-                                className="w-full bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-black outline-none focus:border-red-200 transition text-sm" 
-                                placeholder={method === 'UPI' ? 'example@upi' : 'T...'} 
-                            />
-                            <p className="text-[10px] text-gray-400 mt-2">
-                                {method === 'USDT' ? '*Ensure the address is on the TRC20 network. Wrong network transfers are lost.' : '*Verify your UPI ID before submitting.'}
-                            </p>
-                        </>
-                    )}
+                    
+                    <div>
+                        <label className="block text-gray-500 font-bold text-[10px] mb-2 uppercase tracking-wide">
+                            {activeTab === 'deposit' ? (method === 'UPI' ? 'UTR / Ref No.' : 'Transaction Hash') : (method === 'UPI' ? 'Your UPI ID' : 'Your Wallet Address')}
+                        </label>
+                        <input type="text" value={details} onChange={(e) => setDetails(e.target.value)} className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-white/30 transition text-sm font-medium" placeholder={activeTab === 'deposit' ? 'Enter details...' : 'Receiver details...'} />
+                    </div>
                 </div>
                 
-                <button onClick={handleSubmit} className="w-full bg-gradient-to-r from-[#d93025] to-red-600 text-white font-bold py-4 rounded-full shadow-lg shadow-red-500/30 hover:shadow-red-500/50 transition transform active:scale-95">
+                <button onClick={handleSubmit} className="w-full bg-gradient-to-r from-[#d93025] to-red-800 text-white font-black py-4 rounded-xl shadow-lg shadow-red-900/40 hover:shadow-red-900/60 transition transform active:scale-95 uppercase tracking-widest text-sm">
                     {activeTab === 'deposit' ? 'Confirm Deposit' : 'Request Withdrawal'}
                 </button>
             </div>
 
-            {/* History List */}
             <div className="flex-1">
-                <h3 className="text-gray-800 font-bold mb-3 flex items-center gap-2">
-                    <History size={20} className="text-[#d93025]" /> Transaction History
-                </h3>
+                <h3 className="text-gray-400 font-black mb-4 flex items-center gap-2 text-sm uppercase tracking-widest"><History size={16} className="text-[#d93025]" /> History</h3>
                 <div className="space-y-3">
                     {historyList.map((tx) => (
-                        <div key={tx.id} className="bg-white p-4 rounded-xl flex justify-between items-center shadow-sm border border-gray-50">
+                        <div key={tx.id} className="bg-[#151515] p-4 rounded-xl flex justify-between items-center shadow-sm border border-white/5">
                             <div>
-                                <div className="flex items-center gap-2">
-                                    <p className="text-sm font-bold capitalize text-gray-800">{tx.type}</p>
-                                    <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-bold">{tx.method || 'UPI'}</span>
+                                <div className="flex items-center gap-2 mb-1">
+                                    <p className="text-xs font-black uppercase text-white">{tx.type}</p>
+                                    <span className="text-[9px] bg-white/10 text-gray-400 px-1.5 py-0.5 rounded font-bold">{tx.method || 'UPI'}</span>
                                 </div>
-                                <p className="text-xs text-gray-400">{new Date(tx.timestamp).toLocaleDateString()}</p>
+                                <p className="text-[10px] text-gray-600 font-mono">{new Date(tx.timestamp).toLocaleDateString()}</p>
                             </div>
                             <div className="text-right">
-                                <p className={`font-bold ${tx.type === 'deposit' ? 'text-green-600' : 'text-red-500'}`}>
-                                    {tx.type === 'deposit' ? '+' : '-'}₹{tx.amount}
-                                </p>
-                                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${tx.status === 'approved' || tx.status === 'completed' ? 'bg-green-100 text-green-700' : tx.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>
-                                    {tx.status}
-                                </span>
+                                <p className={`font-black text-sm mb-1 ${tx.type === 'deposit' ? 'text-green-500' : 'text-red-500'}`}>{tx.type === 'deposit' ? '+' : '-'}₹{tx.amount}</p>
+                                <span className={`text-[9px] px-2 py-0.5 rounded font-black uppercase tracking-wider ${tx.status === 'approved' || tx.status === 'completed' ? 'bg-green-900/30 text-green-500' : tx.status === 'rejected' ? 'bg-red-900/30 text-red-500' : 'bg-yellow-900/30 text-yellow-500'}`}>{tx.status}</span>
                             </div>
                         </div>
                     ))}
-                    {historyList.length === 0 && <div className="text-center text-gray-400 text-sm py-4">No transactions yet</div>}
+                    {historyList.length === 0 && <div className="text-center text-gray-600 text-xs py-10 font-bold uppercase tracking-widest">No history found</div>}
                 </div>
             </div>
-
-            {toast && (
-                <Toast 
-                    message={toast.message} 
-                    type={toast.type} 
-                    onClose={() => setToast(null)} 
-                />
-            )}
+            {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
         </div>
-    </div>
-  );
+    );
 };
