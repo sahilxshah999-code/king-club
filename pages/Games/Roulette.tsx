@@ -1,10 +1,13 @@
+
 import React, { useState, useEffect } from 'react';
-import { auth } from '../../firebase';
+import { auth, db } from '../../firebase';
 import { getUserProfile, playRoulette } from '../../services/userService';
 import { UserProfile } from '../../types';
-import { ChevronLeft, RotateCcw, X, PlusCircle, Trash2 } from 'lucide-react';
+import { ChevronLeft, RotateCcw, X, PlusCircle, Trash2, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { WinLossPopup } from '../../components/WinLossPopup';
+import { Toast } from '../../components/Toast';
+import { ref, onValue } from 'firebase/database';
 
 export const Roulette = () => {
     const navigate = useNavigate();
@@ -14,24 +17,45 @@ export const Roulette = () => {
     const [bets, setBets] = useState<{ type: string; value: string | number; amount: number }[]>([]);
     const [chipValue, setChipValue] = useState(10);
     const [popup, setPopup] = useState<{type: 'win' | 'loss', amount: number} | null>(null);
+    const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
     const [history, setHistory] = useState<(string|number)[]>([]);
+    const [onlinePlayers, setOnlinePlayers] = useState(9850);
 
     useEffect(() => {
+        // Fake Players
+        setOnlinePlayers(Math.floor(Math.random() * (20000 - 5000 + 1)) + 5000);
+        const playerInterval = setInterval(() => {
+            setOnlinePlayers(prev => {
+                const change = Math.floor(Math.random() * 50) - 20; 
+                let next = prev + change;
+                if (next < 5000) next = 5000;
+                if (next > 20000) next = 20000;
+                return next;
+            });
+        }, 3000);
+
         const u = auth.currentUser;
         if (u) {
-            getUserProfile(u.uid).then(profile => {
-                setUser(profile);
-                // Access Control: Min balance 100 OR has deposited
-                if (profile) {
-                    const hasDeposited = (profile.totalDeposited || 0) > 0;
-                    if (profile.balance < 100 && !hasDeposited) {
-                        alert("Access Denied: You need a balance of ₹100 or at least one deposit to play Roulette.");
-                        navigate('/');
+            const userRef = ref(db, `users/${u.uid}`);
+            onValue(userRef, (snap) => {
+                if (snap.exists()) {
+                    const val = snap.val();
+                    setUser(val);
+                    if (val.balance <= 1) {
+                        setToast({ message: "Insufficient Access Balance (> ₹1 required)", type: 'error' });
+                        setTimeout(() => navigate('/'), 2000);
                     }
                 }
             });
+        } else {
+            navigate('/login');
         }
+        return () => clearInterval(playerInterval);
     }, [navigate]);
+
+    const showToast = (msg: string, type: 'success' | 'error' = 'error') => {
+        setToast({ message: msg, type });
+    };
 
     const addBet = (type: string, value: string | number) => {
         if(spinning) return;
@@ -46,29 +70,28 @@ export const Roulette = () => {
 
     const spin = async () => {
         if (!user || bets.length === 0 || spinning) {
-            if(bets.length === 0) alert("Please place a bet!");
+            if(bets.length === 0) showToast("Please place a bet!", 'error');
             return;
         }
 
         const totalBet = getTotalBet();
-        if (totalBet > 10000) {
-            alert("Maximum total bet is ₹10,000");
-            return;
-        }
-        if (user.balance < totalBet) {
-            alert("Insufficient Balance");
-            return;
-        }
+        const MIN_BET = 10;
+        const MAX_BET = 10000;
+
+        if (totalBet < MIN_BET) { showToast(`Minimum balance was ${MIN_BET}`); return; }
+        if (totalBet > MAX_BET) { showToast(`Maximum balance was ${MAX_BET}`); return; }
+        if (user.balance < totalBet) { showToast("Insufficient Amount"); return; }
 
         setSpinning(true);
         setPopup(null);
         setResultNum(null);
 
-        const res = await playRoulette(user.uid, bets);
+        // Use any to bypass union type property access errors
+        const res: any = await playRoulette(user.uid, bets);
 
         if (!res.success || res.resultNumber === undefined) {
             setSpinning(false);
-            alert(res.error || "Error processing bet");
+            showToast(res.error || "Error processing bet", 'error');
             return;
         }
 
@@ -77,8 +100,8 @@ export const Roulette = () => {
         // Simulate spin delay
         setTimeout(() => {
             setSpinning(false);
-            setResultNum(res.resultNumber!);
-            setHistory(prev => [res.resultNumber!, ...prev].slice(0, 10));
+            setResultNum(res.resultNumber);
+            setHistory(prev => [res.resultNumber, ...prev].slice(0, 10));
 
             if (res.totalWin && res.totalWin > 0) {
                 setPopup({ type: 'win', amount: res.totalWin });
@@ -137,8 +160,14 @@ export const Roulette = () => {
                          <span className="font-bold text-green-400">₹{(user?.balance || 0).toFixed(2)}</span>
                      </div>
                  </div>
-                 <div className="bg-black/50 px-4 py-1 rounded-full border border-white/10 text-sm font-bold shadow-inner">
-                    Bet: <span className="text-yellow-400">₹{getTotalBet()}</span>
+                 <div className="flex items-center gap-3">
+                     <div className="flex items-center gap-1 bg-black/40 px-2 py-1 rounded-full border border-white/10">
+                        <User size={10} className="text-green-400" />
+                        <span className="text-[10px] font-bold text-green-400">{onlinePlayers.toLocaleString()}</span>
+                     </div>
+                     <div className="bg-black/50 px-4 py-1 rounded-full border border-white/10 text-sm font-bold shadow-inner">
+                        Bet: <span className="text-yellow-400">₹{getTotalBet()}</span>
+                     </div>
                  </div>
             </div>
 
@@ -281,6 +310,13 @@ export const Roulette = () => {
                     type={popup.type} 
                     amount={popup.amount} 
                     onClose={() => setPopup(null)} 
+                />
+            )}
+            {toast && (
+                <Toast 
+                    message={toast.message} 
+                    type={toast.type} 
+                    onClose={() => setToast(null)} 
                 />
             )}
         </div>
