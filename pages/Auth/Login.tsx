@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth } from '../../firebase';
@@ -13,13 +14,11 @@ export const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [serviceUrl, setServiceUrl] = useState('');
-  const [forgotUrl, setForgotUrl] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
     getSystemSettings().then(settings => {
         setServiceUrl(settings.customerServiceUrl || '');
-        setForgotUrl(settings.forgotPasswordUrl || '');
     });
   }, []);
 
@@ -116,8 +115,8 @@ export const Login = () => {
           <div className="flex justify-between items-center text-[11px] font-black uppercase tracking-wider px-1">
               <span className="text-gray-500 cursor-pointer hover:text-white transition">Save Account</span>
               <span 
-                onClick={() => forgotUrl && window.open(forgotUrl, '_blank')} 
-                className={`text-gray-500 cursor-pointer hover:text-white transition ${!forgotUrl && 'opacity-30 pointer-events-none'}`}
+                onClick={() => navigate('/forgot-password')} 
+                className="text-gray-500 cursor-pointer hover:text-white transition"
               >
                 Forgot Password?
               </span>
@@ -148,3 +147,4 @@ export const Login = () => {
     </div>
   );
 };
+                          
