@@ -52,6 +52,7 @@ export const Admin = () => {
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [isAdmin, setIsAdmin] = useState(false);
     const [successMessage, setSuccessMessage] = useState('');
+    const [userCache, setUserCache] = useState<Record<string, string>>({});
     
     // Core Settings State
     const [settings, setSettings] = useState<SystemSettings>({
@@ -129,6 +130,22 @@ export const Admin = () => {
         
         return () => unsubTx();
     }, [navigate]);
+
+    // Fetch user IDs for legacy transactions
+    useEffect(() => {
+        const pendingWithoutId = transactions.filter(t => t.status === 'pending' && !t.userNumericId);
+        const uniqueUids = Array.from(new Set(pendingWithoutId.map(t => t.uid)));
+        
+        uniqueUids.forEach((uid: string) => {
+            if (!userCache[uid]) {
+                getUserProfile(uid).then(u => {
+                    if (u && u.numericId) {
+                        setUserCache(prev => ({...prev, [uid]: u.numericId!}));
+                    }
+                });
+            }
+        });
+    }, [transactions]);
 
     const showSuccess = (msg: string) => { setSuccessMessage(msg); setTimeout(() => setSuccessMessage(''), 3000); };
 
@@ -210,7 +227,7 @@ export const Admin = () => {
             showSuccess(`Transferred to ${manualId}`);
         } catch(e:any) { alert(e.message); }
     };
-    
+
     // Link/System Handlers
     const handleAddActivity = async () => {
         if(!actTitle || !actAmt) return alert("Title/Amount needed");
@@ -231,7 +248,12 @@ export const Admin = () => {
         const list = [...(settings.leaderboard || [])];
         // Ensure list is populated
         while(list.length <= index) list.push({ name: 'Player', userId: '000000', amount: 0, gender: 'male' });
-        list[index] = { ...list[index], [field]: value };
+        
+        // Correct way to update computed property in TS to avoid type errors
+        const entry = { ...list[index] };
+        (entry as any)[field] = value;
+        list[index] = entry;
+
         setSettings({ ...settings, leaderboard: list });
     };
 
@@ -334,6 +356,7 @@ export const Admin = () => {
                             <button onClick={handlePrivateAlert} className="w-full bg-orange-500 text-white py-3 rounded-xl font-bold uppercase text-xs">Send Alert</button>
                         </div>
 
+                    
                         {/* Activity Settlement */}
                         <div className="bg-white p-6 rounded-[2rem] shadow-xl">
                             <h3 className="font-black uppercase text-xs mb-4 text-teal-600 flex gap-2"><CheckSquare size={14}/> 6. Activity Settlement</h3>
@@ -517,13 +540,13 @@ export const Admin = () => {
                             <div key={tx.id} className="bg-white p-5 rounded-[2rem] border border-gray-100 shadow-xl flex justify-between items-center animate-fade-in">
                                 <div>
                                     <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${tx.type === 'deposit' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{tx.type}</span>
-                                    <p className="font-black text-sm mt-1 text-black">ID: <span className="text-red-600">{tx.userNumericId}</span></p>
+                                    <p className="font-black text-sm mt-1 text-black">ID: <span className="text-red-600 text-lg bg-red-100 px-2 py-0.5 rounded border border-red-200">{tx.userNumericId || userCache[tx.uid] || 'Loading...'}</span></p>
                                     <p className="text-[10px] text-gray-400 mt-1">{tx.details}</p>
                                 </div>
                                 <div className="text-right">
                                     <p className="font-black text-xl text-black">₹{tx.amount}</p>
                                     <div className="flex gap-2 mt-2">
-                                        <button onClick={() => handleAction(tx, 'approved')} className="bg-green-600 text-white p-2 rounded-xl shadow-lg active:scale-90 transition"><CheckCircle size={20}/></button>
+                               <button onClick={() => handleAction(tx, 'approved')} className="bg-green-600 text-white p-2 rounded-xl shadow-lg active:scale-90 transition"><CheckCircle size={20}/></button>
                                         <button onClick={() => handleAction(tx, 'rejected')} className="bg-red-600 text-white p-2 rounded-xl shadow-lg active:scale-90 transition"><Trash2 size={20}/></button>
                                     </div>
                                 </div>
@@ -559,4 +582,4 @@ export const Admin = () => {
         </div>
     );
 };
-                    
+                
