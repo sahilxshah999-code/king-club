@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { auth, db } from '../firebase';
 import { createTransaction, getUserProfile, getSystemSettings } from '../services/userService';
@@ -61,23 +62,34 @@ export const Wallet = () => {
 
   const handleSubmit = async () => {
     if (!user || !amount) { showToast("Please enter an amount", 'error'); return; }
+    
     const val = parseFloat(amount);
     if (isNaN(val) || val <= 0) { showToast("Invalid amount", 'error'); return; }
 
     if (activeTab === 'deposit') {
+        // Enforce integer only for deposits
+        if (!Number.isInteger(val)) {
+            return showToast("Deposit amount must be a whole number (no decimals)", 'error');
+        }
         if (settings?.minDeposit && val < settings.minDeposit) return showToast(`Min deposit ₹${settings.minDeposit}`, 'error');
         if (settings?.maxDeposit && val > settings.maxDeposit) return showToast(`Max deposit ₹${settings.maxDeposit}`, 'error');
     }
+    
     if (activeTab === 'withdraw') {
         if (settings?.minWithdraw && val < settings.minWithdraw) return showToast(`Min withdrawal ₹${settings.minWithdraw}`, 'error');
         if (settings?.maxWithdraw && val > settings.maxWithdraw) return showToast(`Max withdrawal ₹${settings.maxWithdraw}`, 'error');
         if (val > (user.winningBalance || 0)) return showToast(`Insufficient Winning Balance.`, 'error');
     }
+    
     if (!details.trim()) return showToast(activeTab === 'deposit' ? "Enter UTR/TxHash" : "Enter Payment Details", 'error');
 
     try {
         await createTransaction({
-            uid: user.uid, type: activeTab, amount: val, method: method,
+            uid: user.uid, 
+            userNumericId: user.numericId, // Ensure ID is saved
+            type: activeTab, 
+            amount: val, 
+            method: method,
             details: activeTab === 'deposit' ? (method === 'UPI' ? `UTR: ${details}` : `TxHash: ${details}`) : (method === 'UPI' ? `UPI: ${details}` : `Address: ${details}`)
         });
         showToast("Request Submitted!", 'success');
@@ -110,8 +122,8 @@ export const Wallet = () => {
             </div>
 
             <div className="bg-[#151515] rounded-2xl border border-white/5 p-1.5 flex mb-6 shadow-lg">
-                <button onClick={() => { setActiveTab('deposit'); setDetails(''); }} className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition ${activeTab === 'deposit' ? 'bg-[#d93025] text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}>Deposit</button>
-                <button onClick={() => { setActiveTab('withdraw'); setDetails(''); }} className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition ${activeTab === 'withdraw' ? 'bg-[#d93025] text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}>Withdraw</button>
+                <button onClick={() => { setActiveTab('deposit'); setAmount(''); setDetails(''); }} className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition ${activeTab === 'deposit' ? 'bg-[#d93025] text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}>Deposit</button>
+                <button onClick={() => { setActiveTab('withdraw'); setAmount(''); setDetails(''); }} className={`flex-1 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition ${activeTab === 'withdraw' ? 'bg-[#d93025] text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}>Withdraw</button>
             </div>
 
             <div className="bg-[#151515] p-6 rounded-[2rem] shadow-xl border border-white/5 mb-6">
@@ -127,7 +139,20 @@ export const Wallet = () => {
                     </div>
                     <div className="bg-black/30 border border-white/10 rounded-xl px-4 py-3 flex items-center focus-within:border-white/30 transition">
                         <span className="text-gray-400 font-bold mr-2">₹</span>
-                        <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className="w-full bg-transparent outline-none text-white font-bold text-lg placeholder-gray-700" placeholder="0.00" />
+                        <input 
+                            type="number" 
+                            value={amount} 
+                            onChange={(e) => setAmount(e.target.value)} 
+                            onKeyDown={(e) => {
+                                // Block decimals for deposit
+                                if (activeTab === 'deposit' && ['.', 'e', 'E', ',', '-'].includes(e.key)) {
+                                    e.preventDefault();
+                                }
+                            }}
+                            step={activeTab === 'deposit' ? "1" : "0.01"}
+                            className="w-full bg-transparent outline-none text-white font-bold text-lg placeholder-gray-700" 
+                            placeholder="0.00" 
+                        />
                     </div>
                     <div className="flex justify-between mt-1 px-1 text-[9px] font-bold text-gray-500 uppercase">
                         <span>Min: {activeTab === 'deposit' ? settings.minDeposit : settings.minWithdraw}</span>
@@ -184,7 +209,7 @@ export const Wallet = () => {
                                 <p className="text-[10px] text-gray-600 font-mono">{new Date(tx.timestamp).toLocaleDateString()}</p>
                             </div>
                             <div className="text-right">
-                                <p className={`font-black text-sm mb-1 ${tx.type === 'deposit' ? 'text-green-500' : 'text-red-500'}`}>{tx.type === 'deposit' ? '+' : '-'}₹{tx.amount}</p>
+                                <p className={`font-black text-sm mb-1 ${tx.type === 'deposit' ? 'text-green-500' : 'text-red-500'}`}>{tx.type === 'deposit' ? '+' : '-'}₹{Number(tx.amount).toFixed(tx.type === 'withdraw' ? 2 : 0)}</p>
                                 <span className={`text-[9px] px-2 py-0.5 rounded font-black uppercase tracking-wider ${tx.status === 'approved' || tx.status === 'completed' ? 'bg-green-900/30 text-green-500' : tx.status === 'rejected' ? 'bg-red-900/30 text-red-500' : 'bg-yellow-900/30 text-yellow-500'}`}>{tx.status}</span>
                             </div>
                         </div>
@@ -197,4 +222,4 @@ export const Wallet = () => {
     </div>
   );
 };
-      
+            
